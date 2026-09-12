@@ -40,7 +40,6 @@ export async function userGet(
   }
   const upn = positionals[0];
   const full = parsed.flags["full"] === true;
-  const prefix = await graphPrefix(context, undefined);
   const select =
     "displayName,jobTitle,department,officeLocation,mail,userPrincipalName,businessPhones,mobilePhone";
   const user = await context.m365.runJson<GraphUser>([
@@ -48,7 +47,7 @@ export async function userGet(
     "--method",
     "get",
     "--url",
-    `${prefix}/users/${upn}?$select=${select}`,
+    `@graph/users/${upn}?$select=${select}`,
   ]);
   const phones = [
     ...(user.businessPhones ?? []),
@@ -70,7 +69,7 @@ export async function userGet(
       "--method",
       "get",
       "--url",
-      `${prefix}/users/${upn}/manager?$select=displayName,mail`,
+      `@graph/users/${upn}/manager?$select=displayName,mail`,
     ]);
   } catch {
     manager = undefined;

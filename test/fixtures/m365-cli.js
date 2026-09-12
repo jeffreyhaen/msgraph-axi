@@ -192,7 +192,12 @@ switch (cmd) {
             ],
           });
         }
-        print({ value: messages.slice(0, 3) });
+        if (url.includes("$search=")) {
+          print({ value: messages.slice(0, 3) });
+        }
+        const topMatch = url.match(/\$top=(\d+)/);
+        const top = topMatch ? parseInt(topMatch[1], 10) : 20;
+        print({ value: messages.slice(0, top) });
       } else if (/\/messages$/.test(url) && method === "post") {
         const bodyArg = rest[rest.indexOf("--body") + 1];
         const body = bodyArg ? JSON.parse(bodyArg) : {};

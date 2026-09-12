@@ -1,5 +1,6 @@
 import { AxiError } from "axi-sdk-js";
 import { PnpCliBackend } from "../backend.js";
+import { getGraphValue } from "../graph.js";
 import { parseFlags, flagString, flagNumber, flagBool, type FlagDef } from "../flags.js";
 import {
   cell,
@@ -78,25 +79,45 @@ export async function mailList(
   const parsed = parseFlags(args, LIST_FLAGS);
   const full = flagBool(parsed, "full", LIST_FLAGS);
   const limit = Math.floor(flagNumber(parsed, "limit", LIST_FLAGS, 20));
+  const fields = parseFields(flagString(parsed, "fields", LIST_FLAGS), MAIL_LIST_DEFAULTS);
 
-  const m365Args = ["outlook", "message", "list"];
   const folder = flagString(parsed, "folder", LIST_FLAGS);
+  let basePath = "/messages";
   if (folder !== undefined) {
-    m365Args.push(GUID_RE.test(folder) ? "--folderId" : "--folderName", folder);
+    basePath = `/mailFolders/${encodeURIComponent(folder)}/messages`;
   }
+
+  const queryParts: string[] = [`$top=${limit}`];
+  const filters: string[] = [];
   const start = flagString(parsed, "start", LIST_FLAGS);
   const end = flagString(parsed, "end", LIST_FLAGS);
   if (start !== undefined) {
-    m365Args.push("--startTime", start);
+    filters.push(`receivedDateTime ge ${start}`);
   }
   if (end !== undefined) {
-    m365Args.push("--endTime", end);
+    filters.push(`receivedDateTime lt ${end}`);
   }
-  m365Args.push(...(await context.m365.userArgs(flagString(parsed, "user", LIST_FLAGS))));
+  if (filters.length > 0) {
+    queryParts.push(`$filter=${encodeURIComponent(filters.join(" and "))}`);
+  }
 
-  const items = await context.m365.runJsonArray<MailListItem>(m365Args);
+  const GRAPH_SELECT_MAP: Record<string, string> = {
+    received: "receivedDateTime",
+  };
+  const selectFields = Array.from(
+    new Set(
+      [...MAIL_LIST_DEFAULTS, ...fields].map((f) => GRAPH_SELECT_MAP[f] ?? f),
+    ),
+  );
+  queryParts.push(`$select=${selectFields.join(",")}`);
+
+  const userFlag = flagString(parsed, "user", LIST_FLAGS);
+  const items = await getGraphValue<MailListItem>(
+    context,
+    userFlag,
+    `${basePath}?${queryParts.join("&")}`,
+  );
   const shown = items.slice(0, limit);
-  const fields = parseFields(flagString(parsed, "fields", LIST_FLAGS), MAIL_LIST_DEFAULTS);
 
   const rows = shown.map((item) => {
     const row: Record<string, unknown> = {
@@ -110,9 +131,9 @@ export async function mailList(
   });
 
   const out: Record<string, unknown> = { mail: rows, count: rows.length };
-  if (shown.length < items.length) {
+  if (items.length >= limit) {
     out.truncated = true;
-    out.help = [`Use --limit ${items.length} to see all ${items.length}`];
+    out.help = [`Use --limit ${limit * 2} to fetch more`];
   }
   return out;
 }

@@ -18,7 +18,7 @@ describe("user get", () => {
         manager: "Carol Manager <carol@contoso.com>",
       });
       const calls = m365Calls(ctx);
-      expect(calls.length).toBe(3); // status + user + manager
+      expect(calls.length).toBe(2); // user + manager (status is not called when targeting an explicit upn)
       const urls = calls.map((c) => c.join(" "));
       expect(urls.some((u) => u.includes(`/users/bob@contoso.com?$select=`))).toBe(true);
       expect(urls.some((u) => u.includes("/users/bob@contoso.com/manager?$select="))).toBe(true);

@@ -37,7 +37,7 @@ describe("mail list", () => {
     }
   });
 
-  it("passes folder, time window and user to m365", async () => {
+  it("passes folder, time window and user to Graph", async () => {
     const ctx = makeContext();
     try {
       await mailList(
@@ -55,19 +55,12 @@ describe("mail list", () => {
       );
       const calls = m365Calls(ctx);
       const call = calls[calls.length - 1];
-      expect(call.slice(0, 3)).toEqual(["outlook", "message", "list"]);
-      expect(call).toEqual(
-        expect.arrayContaining([
-          "--folderName",
-          "inbox",
-          "--startTime",
-          "2026-03-01T00:00:00Z",
-          "--endTime",
-          "2026-03-08T00:00:00Z",
-          "--userName",
-          "bob@contoso.com",
-        ]),
-      );
+      expect(call.slice(0, 3)).toEqual(["request", "--method", "get"]);
+      const url = call[call.indexOf("--url") + 1];
+      expect(url).toContain("@graph/users/bob@contoso.com/mailFolders/inbox/messages");
+      expect(url).toContain("$filter=");
+      expect(decodeURIComponent(url)).toContain("receivedDateTime ge 2026-03-01T00:00:00Z");
+      expect(decodeURIComponent(url)).toContain("receivedDateTime lt 2026-03-08T00:00:00Z");
     } finally {
       cleanupContext(ctx);
     }
