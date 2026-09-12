@@ -360,7 +360,9 @@ export async function calendarAvailability(
     availabilityViewInterval: interval,
   };
   const userArgs = await context.m365.userArgs(flagString(parsed, "user", AVAIL_FLAGS));
-  const response = await context.m365.runJson<ScheduleAvailability[] | { error: unknown }>([
+  const response = await context.m365.runJson<
+    ScheduleAvailability[] | { value?: ScheduleAvailability[] } | { error: unknown }
+  >([
     "request",
     "--method",
     "post",
@@ -371,7 +373,11 @@ export async function calendarAvailability(
     "--content-type",
     "application/json",
   ]);
-  const list = Array.isArray(response) ? response : [];
+  const list = Array.isArray(response)
+    ? response
+    : Array.isArray((response as { value?: ScheduleAvailability[] }).value)
+      ? (response as { value: ScheduleAvailability[] }).value
+      : [];
   const rows = list.map((entry) => {
     const row: Record<string, unknown> = {
       schedule: entry.scheduleId ?? "",
