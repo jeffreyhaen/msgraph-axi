@@ -9,6 +9,7 @@ import {
   project,
   type EmailAddress,
 } from "../toon.js";
+import { mailSendDraft } from "./mailflow.js";
 
 export interface MailContext {
   m365: PnpCliBackend;
@@ -58,6 +59,7 @@ const SEND_FLAGS: Record<string, FlagDef> = {
   attach: { type: "string" },
   mailbox: { type: "string", aliases: ["m"] },
   sender: { type: "string" },
+  draft: { type: "string" },
   execute: { type: "boolean" },
 };
 
@@ -165,6 +167,27 @@ export async function mailSend(
   const to = flagString(parsed, "to", SEND_FLAGS);
   const subject = flagString(parsed, "subject", SEND_FLAGS);
   const body = flagString(parsed, "body", SEND_FLAGS);
+  const draftId = flagString(parsed, "draft", SEND_FLAGS);
+  const execute = flagBool(parsed, "execute", SEND_FLAGS);
+
+  if (draftId !== undefined) {
+    if (to !== undefined || subject !== undefined || body !== undefined) {
+      throw new AxiError(
+        "mail send --draft cannot be combined with --to/--subject/--body",
+        "VALIDATION_ERROR",
+        ["Just use: msgraph-axi mail send --draft <id> [--execute]"],
+      );
+    }
+    if (!execute) {
+      return {
+        preview: { draftId, willSend: true },
+        execute: false,
+        help: ["Run with --execute to send the draft"],
+      };
+    }
+    return mailSendDraft(draftId, flagString(parsed, "user", SEND_FLAGS), context);
+  }
+
   if (to === undefined || subject === undefined || body === undefined) {
     throw new AxiError(
       "mail send requires --to, --subject and --body",
@@ -185,7 +208,6 @@ export async function mailSend(
     attachments: flagString(parsed, "attach", SEND_FLAGS) ?? "",
   };
 
-  const execute = flagBool(parsed, "execute", SEND_FLAGS);
   if (!execute) {
     return {
       preview,
@@ -193,7 +215,6 @@ export async function mailSend(
       help: ["Run with --execute to send the mail"],
     };
   }
-
   const m365Args = ["outlook", "mail", "send"];
   m365Args.push("--to", to);
   if (preview.cc) {

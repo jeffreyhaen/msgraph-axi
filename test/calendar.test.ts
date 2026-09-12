@@ -7,6 +7,7 @@ import {
   calendarCreate,
   calendarDelete,
   calendarList,
+  calendarSuggest,
   calendarUpdate,
 } from "../src/commands/calendar.js";
 import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls } from "./helpers.js";
@@ -324,6 +325,63 @@ describe("calendar availability", () => {
     const ctx = makeContext();
     try {
       await expectAxiError(calendarAvailability([], ctx), "VALIDATION_ERROR");
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+});
+
+describe("calendar suggest", () => {
+  it("finds meeting slots with confidence and availability", async () => {
+    const ctx = makeContext();
+    try {
+      const out = await calendarSuggest(
+        ["--attendees", "bob@contoso.com,carol@contoso.com", "--duration", "60"],
+        ctx,
+      );
+      const rows = out.suggestions as Array<Record<string, unknown>>;
+      expect(rows.length).toBe(2);
+      expect(rows[0]).toMatchObject({
+        start: "2026-03-16T09:00:00",
+        end: "2026-03-16T10:00:00",
+        confidence: "90%",
+        available: "1/2",
+        organizer: "free",
+      });
+      expect(rows[0].reason).toBeUndefined();
+      const calls = m365Calls(ctx);
+      const call = calls[calls.length - 1];
+      const body = JSON.parse(call[call.indexOf("--body") + 1]) as Record<string, unknown>;
+      expect(body.meetingDuration).toBe("PT60M");
+      expect((body.attendees as Array<Record<string, unknown>>).length).toBe(2);
+      expect(call.join(" ")).toContain("@graph/users/alice@contoso.com/findMeetingTimes");
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("expands per-attendee availability with --full", async () => {
+    const ctx = makeContext();
+    try {
+      const out = await calendarSuggest(
+        ["--attendees", "bob@contoso.com", "--full"],
+        ctx,
+      );
+      const rows = out.suggestions as Array<Record<string, unknown>>;
+      const attendees = rows[0].attendees as Array<Record<string, unknown>>;
+      expect(attendees[0]).toMatchObject({
+        attendee: "bob@contoso.com",
+        availability: "free",
+      });
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("requires --attendees", async () => {
+    const ctx = makeContext();
+    try {
+      await expectAxiError(calendarSuggest([], ctx), "VALIDATION_ERROR");
     } finally {
       cleanupContext(ctx);
     }

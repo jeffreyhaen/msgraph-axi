@@ -88,6 +88,17 @@ const AVAIL_FLAGS: Record<string, FlagDef> = {
   full: { type: "boolean" },
 };
 
+const SUGGEST_FLAGS: Record<string, FlagDef> = {
+  user: { type: "string" },
+  attendees: { type: "string" },
+  duration: { type: "number" },
+  start: { type: "string" },
+  end: { type: "string" },
+  candidates: { type: "number" },
+  timezone: { type: "string" },
+  full: { type: "boolean" },
+};
+
 const EVENT_DEFAULTS = ["id", "subject", "start", "end"];
 
 export async function calendarList(
@@ -379,6 +390,119 @@ export async function calendarAvailability(
     return row;
   });
   return { schedules: rows, count: rows.length, interval };
+}
+
+interface MeetingSuggestion {
+  meetingTimeSlot?: {
+    start?: { dateTime?: string; timeZone?: string };
+    end?: { dateTime?: string; timeZone?: string };
+  };
+  confidence?: number;
+  organizerAvailability?: string;
+  attendeeAvailability?: Array<{
+    availability?: string;
+    attendee?: { emailAddress?: { address?: string } };
+  }>;
+  suggestionReason?: string;
+}
+
+interface MeetingTimeResponse {
+  meetingTimeSuggestions?: MeetingSuggestion[];
+  emptySuggestionsReason?: string;
+}
+
+/**
+ * Free-busy search across attendees via Graph `findMeetingTimes`.
+ * Read-only; needs Calendars.Read (delegated) or Calendars.Read.Shared.
+ */
+export async function calendarSuggest(
+  args: string[],
+  context: CalendarContext,
+): Promise<Record<string, unknown>> {
+  const parsed = parseFlags(args, SUGGEST_FLAGS);
+  const attendees = flagString(parsed, "attendees", SUGGEST_FLAGS);
+  if (attendees === undefined || attendees.trim() === "") {
+    throw new AxiError(
+      "calendar suggest requires --attendees <upn1,upn2>",
+      "VALIDATION_ERROR",
+      ['Example: msgraph-axi calendar suggest --attendees a@x.com,b@x.com --duration 60'],
+    );
+  }
+  const full = flagBool(parsed, "full", SUGGEST_FLAGS);
+  const duration = Math.floor(flagNumber(parsed, "duration", SUGGEST_FLAGS, 60));
+  const candidates = Math.floor(flagNumber(parsed, "candidates", SUGGEST_FLAGS, 5));
+  const timezone = flagString(parsed, "timezone", SUGGEST_FLAGS) ?? "UTC";
+  const nowPlusHour = new Date(Date.now() + 60 * 60 * 1000);
+  const start =
+    flagString(parsed, "start", SUGGEST_FLAGS) ??
+    `${nowPlusHour.toISOString().slice(0, 16)}:00`;
+  const end =
+    flagString(parsed, "end", SUGGEST_FLAGS) ??
+    new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const body = {
+    attendees: attendees
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean)
+      .map((address) => ({ type: "required", emailAddress: { address } })),
+    meetingDuration: `PT${duration}M`,
+    maxCandidates: candidates,
+    returnSuggestionReasons: true,
+    timeConstraint: {
+      timeslots: [
+        {
+          start: { dateTime: start, timeZone: timezone },
+          end: { dateTime: end, timeZone: timezone },
+        },
+      ],
+    },
+  };
+  const userArgs = await context.m365.userArgs(
+    flagString(parsed, "user", SUGGEST_FLAGS),
+  );
+  const user = userArgs[1] ?? "me";
+  const response = await context.m365.runJson<MeetingTimeResponse>([
+    "request",
+    "--method",
+    "post",
+    "--url",
+    `@graph/users/${user}/findMeetingTimes`,
+    "--body",
+    JSON.stringify(body),
+    "--content-type",
+    "application/json",
+  ]);
+  const suggestions = response.meetingTimeSuggestions ?? [];
+  if (suggestions.length === 0) {
+    return {
+      suggestions: [],
+      count: 0,
+      reason: response.emptySuggestionsReason ?? "no slots found",
+    };
+  }
+  const rows = suggestions.map((suggestion) => {
+    const slot = suggestion.meetingTimeSlot;
+    const availability = suggestion.attendeeAvailability ?? [];
+    const available = availability.filter(
+      (a) => a.availability === "free" || a.availability === "unknown",
+    ).length;
+    const row: Record<string, unknown> = {
+      start: slot?.start?.dateTime ?? "",
+      end: slot?.end?.dateTime ?? "",
+      confidence: `${Math.round((suggestion.confidence ?? 0) * 100)}%`,
+      available: `${available}/${availability.length}`,
+      organizer: suggestion.organizerAvailability ?? "",
+    };
+    if (full) {
+      row.reason = suggestion.suggestionReason ?? "";
+      row.attendees = availability.map((a) => ({
+        attendee: a.attendee?.emailAddress?.address ?? "",
+        availability: a.availability ?? "",
+      }));
+    }
+    return row;
+  });
+  return { suggestions: rows, count: rows.length, duration, timezone };
 }
 
 function buildEventBody(

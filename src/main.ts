@@ -17,12 +17,27 @@ import {
   calendarCancel,
   calendarDelete,
   calendarAvailability,
+  calendarSuggest,
   type CalendarContext,
 } from "./commands/calendar.js";
+import {
+  mailSearch,
+  mailDraft,
+  mailThread,
+  mailAttachmentGet,
+  type MailFlowContext,
+} from "./commands/mailflow.js";
+import { userGet, type UserContext } from "./commands/user.js";
 import { raw, type RawContext } from "./commands/raw.js";
 import { home, type HomeContext } from "./commands/home.js";
 
-type AppContext = AuthContext & MailContext & CalendarContext & RawContext & HomeContext;
+type AppContext = AuthContext &
+  MailContext &
+  CalendarContext &
+  MailFlowContext &
+  RawContext &
+  UserContext &
+  HomeContext;
 
 const GLOBAL_FLAGS = "--user <upn>  --limit N  --fields a,b  --full  --execute  --help";
 
@@ -71,13 +86,25 @@ const commands: Record<string, AxiCliCommand<AppContext>> = {
       read: cmd(mailRead),
       send: cmd(mailSend),
       delete: cmd(mailDelete),
+      search: cmd(mailSearch),
+      draft: cmd(mailDraft),
+      thread: cmd(mailThread),
+      attachment: sub(
+        { get: cmd(mailAttachmentGet) },
+        "Valid: mail attachment get <attachmentId> --message <messageId> [--out <path>]",
+      ),
     },
     [
       "Valid subcommands:",
       "  mail list [--folder <name|id>] [--start <iso>] [--end <iso>]",
       "  mail read <id> [--full]",
       "  mail send --to <a,b> --subject \"...\" --body \"...\" [--execute]",
+      "  mail send --draft <id> [--execute]",
       "  mail delete <id> [--execute --confirm <id>]",
+      "  mail search --search \"<query>\"",
+      "  mail draft --to <a> --subject \"...\" --body \"...\" [--execute]",
+      "  mail thread <conversationId>",
+      "  mail attachment get <attachmentId> --message <messageId> [--out <path>]",
     ].join("\n"),
   ),
   "calendar": sub(
@@ -89,6 +116,7 @@ const commands: Record<string, AxiCliCommand<AppContext>> = {
       cancel: cmd(calendarCancel),
       delete: cmd(calendarDelete),
       availability: cmd(calendarAvailability),
+      suggest: cmd(calendarSuggest),
     },
     [
       "Valid subcommands:",
@@ -99,7 +127,12 @@ const commands: Record<string, AxiCliCommand<AppContext>> = {
       "  calendar cancel <id> [--comment \"...\"] [--execute --confirm <id>]",
       "  calendar delete <id> [--permanent] [--execute --confirm <id>]",
       "  calendar availability --schedules <a,b> [--start] [--end] [--interval N]",
+      "  calendar suggest --attendees <a,b> [--duration 60] [--start] [--end]",
     ].join("\n"),
+  ),
+  "user": sub(
+    { get: cmd(userGet) },
+    "Valid: user get <upn>  (people + manager lookup)",
   ),
   "raw": cmd(raw),
 };
@@ -110,8 +143,9 @@ usage: msgraph-axi <command> [args] [flags]
 
 commands:
   auth status|login|logout        sign-in state for the m365 backend
-  mail list|read|send|delete      Outlook messages
-  calendar list|agenda|create|update|cancel|delete|availability
+  mail list|read|send|delete|search|draft|thread|attachment
+  calendar list|agenda|create|update|cancel|delete|availability|suggest
+  user get <upn>                  people and manager lookup
   raw <graph-path>                any Graph endpoint via m365 request
 
 global flags: ${GLOBAL_FLAGS}
@@ -140,7 +174,12 @@ const COMMAND_HELP: Record<string, string> = {
     "      [--cc a] [--bcc b] [--body-type text|HTML] [--importance low|normal|high]",
     "      [--attach path,...] [--mailbox <upn>] [--execute]",
     "      without --execute prints a preview only (dry run)",
+    "  msgraph-axi mail send --draft <id> [--execute]   send a saved draft",
     "  msgraph-axi mail delete <id> [--execute --confirm <id>]",
+    "  msgraph-axi mail search --search \"<query>\" [--limit N]",
+    "  msgraph-axi mail draft --to <a> --subject \"...\" --body \"...\" [--execute]",
+    "  msgraph-axi mail thread <conversationId> [--full]",
+    "  msgraph-axi mail attachment get <attachmentId> --message <messageId> [--out <path>]",
     "",
     `flags: ${GLOBAL_FLAGS}`,
   ].join("\n"),
@@ -157,6 +196,16 @@ const COMMAND_HELP: Record<string, string> = {
     "  msgraph-axi calendar delete <id> [--permanent] [--execute --confirm <id>]",
     "  msgraph-axi calendar availability --schedules a@x.com,b@y.com",
     "      [--start <iso>] [--end <iso>] [--interval 30] [--timezone <tz>]",
+    "  msgraph-axi calendar suggest --attendees a@x.com,b@y.com",
+    "      [--duration 60] [--start <iso>] [--end <iso>] [--candidates 5] [--timezone <tz>]",
+    "",
+    `flags: ${GLOBAL_FLAGS}`,
+  ].join("\n"),
+  user: [
+    "user — people and organizational lookup via Graph",
+    "",
+    "  msgraph-axi user get <upn>",
+    "      name, job title, department, location, contact info and manager",
     "",
     `flags: ${GLOBAL_FLAGS}`,
   ].join("\n"),

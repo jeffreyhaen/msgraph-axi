@@ -37,12 +37,25 @@ msgraph-axi mail send --to a@x.com,b@y.com --subject "..." --body "..."
                       [--importance low|normal|high] [--attach path1,path2]
                       [--mailbox <upn>] [--sender <upn>] [--execute]
 msgraph-axi mail delete <id> [--user <upn>] [--execute --confirm <id>]
+msgraph-axi mail search --search "<query>" [--user <upn>] [--limit 20]
+msgraph-axi mail draft --to a@x.com --subject "..." --body "..." [--cc a] [--bcc b]
+                        [--execute]
+msgraph-axi mail send --draft <id> [--execute]
+msgraph-axi mail thread <conversationId> [--user <upn>] [--full]
+msgraph-axi mail attachment get <attachmentId> --message <messageId> [--out <path>]
 ```
 
 `mail list` defaults to `id, from, subject, received`; `--fields` adds more columns
 (e.g. `isRead,hasAttachments`). Cells truncate at 200 characters — `--full` lifts that.
 `mail read` shows a snippet only; use `--full` precisely when the body is needed, and
 pass its text back as-is.
+
+`mail search` uses Graph `$search` (subject, body, sender). `mail draft` saves an
+`isDraft` message so the user can review it before `mail send --draft <id>` sends it —
+prefer this over sending directly when the user wants to verify first. `mail thread`
+returns the whole conversation oldest-first with snippets; `--full` adds bodies.
+`mail attachment get` needs the message id from `mail list`/`mail read`; it writes to
+`./<attachment-name>` unless `--out` is given.
 
 ### Sending mail
 
@@ -66,12 +79,18 @@ msgraph-axi calendar delete <id> [--permanent] [--execute --confirm <id>]
 msgraph-axi calendar availability --schedules a@x.com,b@y.com
                                   [--start <iso>] [--end <iso>] [--interval 30]
                                   [--timezone <tz>] [--full]
+msgraph-axi calendar suggest --attendees a@x.com,b@y.com
+                              [--duration 60] [--start <iso>] [--end <iso>]
+                              [--candidates 5] [--timezone <tz>] [--full]
 ```
 
 `calendar agenda` defaults to today through the next 7 days, sorted by start. Event
 cells carry the time zone: `2026-03-15T12:00:00 CET`. `calendar availability` maps to
 Graph `getSchedule` and summarizes each schedule as `availabilityView` plus a `busy`
-count; `--full` expands the raw schedule items.
+count; `--full` expands the raw schedule items. `calendar suggest` maps to Graph
+`findMeetingTimes` and returns candidate slots with confidence and an `x/y` available
+count; `--full` breaks the availability down per attendee. When the user asks to
+"find a time for …", use `suggest`, then create the event with `calendar create`.
 
 ### Meetings and write gates
 
@@ -85,6 +104,18 @@ move or reschedule: use `calendar update` with new `--start`/`--end` instead.
 `calendar list`). `--user <upn>` works on every command; the default is the signed-in
 account. When a user pastes a meeting request or an event snippet, extract subject,
 start/end, location and attendees from it and pass them explicitly.
+
+## People
+
+```sh
+msgraph-axi user get <upn>
+```
+
+Returns name, job title, department, office location, contact info and the manager
+(`displayName <mail>`) — one call to answer "who is this person and who do they
+report to?". Reading other people's profiles and managers may require
+`User.Read.All` or `Directory.Read.All` depending on the tenant; the signed-in
+user only needs `User.Read`.
 
 ## Escape hatch
 

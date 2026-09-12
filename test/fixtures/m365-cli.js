@@ -1,7 +1,7 @@
 // Fake m365 CLI for tests. Reads argv, writes fixture JSON on stdout,
 // "Error: ..." on stderr with exit 1 for failure modes.
 // Set FAKE_M365_LOG=<file> to append every argv as JSON lines for assertions.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const logFile = process.env.FAKE_M365_LOG;
@@ -65,7 +65,8 @@ switch (cmd) {
     break;
 
   case "login":
-    print({});
+    // interactive flow: exit 0 without printing (stdout is inherited)
+    process.exit(0);
     break;
 
   case "logout":
@@ -125,7 +126,50 @@ switch (cmd) {
       const method = rest[rest.indexOf("--method") + 1] ?? "get";
       const url = rest[rest.indexOf("--url") + 1] ?? "";
       if (args.includes("--graph-fail")) fail("ResourceNotFound");
-      if (url.includes("getSchedule")) {
+      if (url.includes("findMeetingTimes")) {
+        print({
+          meetingTimeSuggestions: [
+            {
+              meetingTimeSlot: {
+                start: { dateTime: "2026-03-16T09:00:00", timeZone: "UTC" },
+                end: { dateTime: "2026-03-16T10:00:00", timeZone: "UTC" },
+              },
+              confidence: 0.9,
+              organizerAvailability: "free",
+              attendeeAvailability: [
+                { availability: "free", attendee: { emailAddress: { address: "bob@contoso.com" } } },
+                { availability: "busy", attendee: { emailAddress: { address: "carol@contoso.com" } } },
+              ],
+              suggestionReason: "Suggestion computed by the system",
+            },
+            {
+              meetingTimeSlot: {
+                start: { dateTime: "2026-03-16T14:00:00", timeZone: "UTC" },
+                end: { dateTime: "2026-03-16T15:00:00", timeZone: "UTC" },
+              },
+              confidence: 0.7,
+              organizerAvailability: "tentative",
+              attendeeAvailability: [
+                { availability: "free", attendee: { emailAddress: { address: "bob@contoso.com" } } },
+                { availability: "free", attendee: { emailAddress: { address: "carol@contoso.com" } } },
+              ],
+              suggestionReason: "Suggestion computed by the system",
+            },
+          ],
+        });
+      } else if (url.includes("/send")) {
+        print({});
+      } else if (url.includes("/$value")) {
+        const filePath = rest[rest.indexOf("--filePath") + 1];
+        if (filePath) {
+          writeFileSync(filePath, "pdf-bytes", "utf8");
+        }
+        print({});
+      } else if (url.includes("attachments/")) {
+        print({ name: "report.pdf", contentType: "application/pdf", size: 9 });
+      } else if (url.includes("/manager")) {
+        print({ displayName: "Carol Manager", mail: "carol@contoso.com" });
+      } else if (url.includes("getSchedule")) {
         print([
           {
             scheduleId: "alice@contoso.com",
@@ -136,8 +180,34 @@ switch (cmd) {
             ],
           },
         ]);
-      } else if (method === "get" && url.includes("unreadItemCount")) {
+      } else if (url.includes("unreadItemCount")) {
         print({ unreadItemCount: 4 });
+      } else if (/\.messages\?/.test(url) || /\/messages\?/.test(url)) {
+        if (url.includes("$filter=conversationId")) {
+          print({
+            value: [
+              { id: "t1", subject: "Thread", from: { emailAddress: { name: "Alice", address: "alice@contoso.com" } }, receivedDateTime: "2026-03-02T09:00:00Z", bodyPreview: "First" },
+              { id: "t2", subject: "RE: Thread", from: { emailAddress: { name: "Bob", address: "bob@contoso.com" } }, receivedDateTime: "2026-03-02T10:00:00Z", bodyPreview: "Second" },
+              { id: "t3", subject: "RE: Thread", from: { emailAddress: { name: "Alice", address: "alice@contoso.com" } }, receivedDateTime: "2026-03-03T08:00:00Z", bodyPreview: "Third" },
+            ],
+          });
+        }
+        print({ value: messages.slice(0, 3) });
+      } else if (/\/messages$/.test(url) && method === "post") {
+        const bodyArg = rest[rest.indexOf("--body") + 1];
+        const body = bodyArg ? JSON.parse(bodyArg) : {};
+        print({ id: "draft-1", subject: body.subject, isDraft: true });
+      } else if (/\/users\/[^?]+\?/.test(url)) {
+        print({
+          displayName: "Alice Wonder",
+          jobTitle: "Engineer",
+          department: "IT",
+          officeLocation: "HQ-1",
+          mail: "alice@contoso.com",
+          userPrincipalName: "alice@contoso.com",
+          businessPhones: ["+1 555 0100"],
+          mobilePhone: null,
+        });
       } else if (method === "post" || method === "patch") {
         print({ id: "new-event-id", ...(method === "patch" ? {} : { subject: "x" }) });
       } else {

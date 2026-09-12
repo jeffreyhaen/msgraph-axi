@@ -102,12 +102,12 @@ export class PnpCliBackend {
    * SDK's no-interactive-prompts rule intentionally leaves room for this: it is
    * an explicit user action, not an agent-driven prompt.
    */
-  async login(authType: string): Promise<void> {
+  async login(authType: string, extraArgs: string[] = []): Promise<void> {
     const { spawn } = await import("cross-spawn");
     const result = await new Promise<number>((resolve, reject) => {
       const child = spawn(
         this.bin,
-        [...this.prefix, "login", "--authType", authType, "--output", "json"],
+        [...this.prefix, "login", "--authType", authType, ...extraArgs, "--output", "json"],
         { stdio: "inherit" },
       );
       child.on("error", (e: NodeJS.ErrnoException) => {
