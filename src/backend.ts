@@ -1,6 +1,7 @@
 import { spawn } from "cross-spawn";
 import { AxiError } from "axi-sdk-js";
 import { readFileSync } from "node:fs";
+import { hostTimeZone } from "./time.js";
 
 export interface RunResult {
   stdout: string;
@@ -20,6 +21,7 @@ const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export class PnpCliBackend {
   private userCache: Promise<string | undefined> | undefined;
+  private timeZoneCache = new Map<string, Promise<string>>();
 
   constructor(
     private readonly bin: string = process.env.MSGRAPH_AXI_M365_BIN ?? "m365",
@@ -155,6 +157,38 @@ export class PnpCliBackend {
   }
 
   /**
+   * Resolve the time zone a command should work in: an explicit `--timezone`
+   * wins, then the mailbox setting from Graph, then this machine's zone. The
+   * mailbox lookup needs `MailboxSettings.Read`; without it the machine zone is
+   * used so times are never silently read or written as UTC.
+   */
+  timeZone(userFlag: string | undefined, explicit?: string): Promise<string> {
+    if (explicit !== undefined && explicit.trim() !== "") {
+      return Promise.resolve(explicit.trim());
+    }
+    const key = userFlag ?? "";
+    let cached = this.timeZoneCache.get(key);
+    if (!cached) {
+      cached = this.fetchMailboxTimeZone(userFlag).catch(() => hostTimeZone());
+      this.timeZoneCache.set(key, cached);
+    }
+    return cached;
+  }
+
+  private async fetchMailboxTimeZone(userFlag: string | undefined): Promise<string> {
+    const user = (await this.userArgs(userFlag))[1] ?? "me";
+    const settings = await this.runJson<{ timeZone?: string }>([
+      "request",
+      "--method",
+      "get",
+      "--url",
+      `@graph/users/${user}/mailboxSettings?$select=timeZone`,
+    ]);
+    const zone = settings.timeZone?.trim();
+    return zone ? zone : hostTimeZone();
+  }
+
+  /**
    * Build the `--userName`/`--userId` pair: an explicit `--user` that looks
    * like a GUID is passed as `--userId`, anything else as `--userName`; without
    * `--user` the signed-in account is resolved from `m365 status`.
@@ -193,23 +227,56 @@ export function resolveBody(body: string | undefined): string | undefined {
   return body;
 }
 
+const SIGNED_OUT_RE = /logged out|not signed in|no valid (connection|login)/i;
+const PERMISSION_RE = /403|forbidden|access denied|insufficient|does not have permission|consent/i;
+const AUTH_RE = /401|unauthor|invalid token|token (has )?expired|authentication|interactive/i;
+const NOT_FOUND_RE = /404|not found|itemnotfound|does not exist/i;
+const INPUT_RE = /not a valid|invalid|must be|unrecognized|unexpected|unknown (flag|command)|parameter|expects/i;
+
+/**
+ * Map a backend failure to an actionable error. The hint must match the cause:
+ * telling the caller to check its connection after a bad `--start` value sends
+ * agents down the wrong path.
+ */
 function m365Error(stderr: string, stdout: string): AxiError {
   const message =
     extractError(stderr) ??
     extractError(stdout) ??
     (stderr.trim() || stdout.trim());
-  if (/logged out|not signed in|no valid connection/i.test(message)) {
+  if (SIGNED_OUT_RE.test(message)) {
     return new AxiError(
       "m365: not signed in",
       "NOT_SIGNED_IN",
       ["Run `msgraph-axi auth login` to sign in"],
     );
   }
-  return new AxiError(
-    `m365: ${message}`,
-    "M365_ERROR",
-    ["Run `msgraph-axi auth status` to verify the connection"],
-  );
+  if (PERMISSION_RE.test(message)) {
+    return new AxiError(`m365: ${message}`, "M365_ERROR", [
+      "The signed-in account is missing a Graph permission for this call",
+      "See README.md for the required scope, then re-consent the app",
+    ]);
+  }
+  if (AUTH_RE.test(message)) {
+    return new AxiError(`m365: ${message}`, "M365_ERROR", [
+      "The session looks expired: run `msgraph-axi auth login`",
+      "Run `msgraph-axi auth status` to check the connection",
+    ]);
+  }
+  if (NOT_FOUND_RE.test(message)) {
+    return new AxiError(`m365: ${message}`, "M365_ERROR", [
+      "Check that the id or upn exists and is visible to the signed-in account",
+    ]);
+  }
+  if (INPUT_RE.test(message)) {
+    return new AxiError(`m365: ${message}`, "M365_ERROR", [
+      "This is an input error, not a connection problem: check the flag values",
+      "Run `msgraph-axi <command> --help` for the accepted format",
+    ]);
+  }
+  return new AxiError(`m365: ${message}`, "M365_ERROR", [
+    "Inspect the failure with the m365 CLI directly for the raw response",
+    "Run `msgraph-axi <command> --help` for the accepted flags",
+  ]);
 }
 
 function extractError(text: string): string | undefined {

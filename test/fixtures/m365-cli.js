@@ -47,7 +47,28 @@ const calendars = [
   { id: "cal-2", name: "Secondary", color: "auto" },
 ];
 
+const directoryUsers = [
+  {
+    displayName: "Alice Wonder",
+    mail: "alice@contoso.com",
+    userPrincipalName: "alice@contoso.com",
+    jobTitle: "Engineer",
+    department: "IT",
+  },
+  {
+    displayName: "Bob Builder",
+    mail: "bob@contoso.com",
+    userPrincipalName: "bob@contoso.com",
+    jobTitle: "Architect",
+    department: "IT",
+  },
+];
+
 const [cmd, ...rest] = args;
+
+if (process.env.FAKE_M365_ERROR) {
+  fail(process.env.FAKE_M365_ERROR);
+}
 
 switch (cmd) {
   case "status":
@@ -134,7 +155,7 @@ switch (cmd) {
                 start: { dateTime: "2026-03-16T09:00:00", timeZone: "UTC" },
                 end: { dateTime: "2026-03-16T10:00:00", timeZone: "UTC" },
               },
-              confidence: 0.9,
+              confidence: 100,
               organizerAvailability: "free",
               attendeeAvailability: [
                 { availability: "free", attendee: { emailAddress: { address: "bob@contoso.com" } } },
@@ -147,7 +168,7 @@ switch (cmd) {
                 start: { dateTime: "2026-03-16T14:00:00", timeZone: "UTC" },
                 end: { dateTime: "2026-03-16T15:00:00", timeZone: "UTC" },
               },
-              confidence: 0.7,
+              confidence: 70,
               organizerAvailability: "tentative",
               attendeeAvailability: [
                 { availability: "free", attendee: { emailAddress: { address: "bob@contoso.com" } } },
@@ -157,6 +178,10 @@ switch (cmd) {
             },
           ],
         });
+      } else if (url.includes("mailboxSettings")) {
+        print({ timeZone: process.env.FAKE_M365_TIMEZONE ?? "UTC" });
+      } else if (/\/users\?/.test(url)) {
+        print({ value: directoryUsers });
       } else if (url.includes("/send")) {
         print({});
       } else if (url.includes("/$value")) {

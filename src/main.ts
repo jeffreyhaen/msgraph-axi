@@ -27,7 +27,7 @@ import {
   mailAttachmentGet,
   type MailFlowContext,
 } from "./commands/mailflow.js";
-import { userGet, type UserContext } from "./commands/user.js";
+import { userGet, userSearch, type UserContext } from "./commands/user.js";
 import { raw, type RawContext } from "./commands/raw.js";
 import { home, type HomeContext } from "./commands/home.js";
 
@@ -122,7 +122,7 @@ const commands: Record<string, AxiCliCommand<AppContext>> = {
       "Valid subcommands:",
       "  calendar list",
       "  calendar agenda [--start <iso>] [--end <iso>] [--calendar <id|name>]",
-      "  calendar create --subject \"...\" --start <iso> --end <iso> [--execute]",
+      "  calendar create --subject \"...\" --start <iso> --end <iso> [--show-as free] [--execute]",
       "  calendar update <id> [--subject \"...\"] [--start <iso>] [--execute]",
       "  calendar cancel <id> [--comment \"...\"] [--execute --confirm <id>]",
       "  calendar delete <id> [--permanent] [--execute --confirm <id>]",
@@ -131,8 +131,12 @@ const commands: Record<string, AxiCliCommand<AppContext>> = {
     ].join("\n"),
   ),
   "user": sub(
-    { get: cmd(userGet) },
-    "Valid: user get <upn>  (people + manager lookup)",
+    { get: cmd(userGet), search: cmd(userSearch) },
+    [
+      "Valid subcommands:",
+      "  user get <upn>            profile, contact info and manager",
+      "  user search <term>        directory lookup by name, mail or upn prefix",
+    ].join("\n"),
   ),
   "raw": cmd(raw),
 };
@@ -145,7 +149,7 @@ commands:
   auth status|login|logout        sign-in state for the m365 backend
   mail list|read|send|delete|search|draft|thread|attachment
   calendar list|agenda|create|update|cancel|delete|availability|suggest
-  user get <upn>                  people and manager lookup
+  user get <upn>|search <term>    people, manager and directory lookup
   raw <graph-path>                any Graph endpoint via m365 request
 
 global flags: ${GLOBAL_FLAGS}
@@ -190,14 +194,22 @@ const COMMAND_HELP: Record<string, string> = {
     "  msgraph-axi calendar agenda [--start <iso>] [--end <iso>]",
     "      [--calendar <id|name>] [--timezone <tz>]   default: today..+7d",
     "  msgraph-axi calendar create --subject \"...\" --start <iso> --end <iso>",
-    "      [--body \"...\"] [--location \"...\"] [--attendees a@x.com] [--execute]",
-    "  msgraph-axi calendar update <id> [--subject \"...\"] [--start <iso>] [--execute]",
+    "      [--body \"...\"] [--location \"...\"] [--attendees a@x.com]",
+    "      [--show-as free|tentative|busy|oof|workingElsewhere] [--execute]",
+    "  msgraph-axi calendar update <id> [--subject \"...\"] [--start <iso>] [--show-as <state>] [--execute]",
     "  msgraph-axi calendar cancel <id> [--comment \"...\"] [--execute --confirm <id>]",
     "  msgraph-axi calendar delete <id> [--permanent] [--execute --confirm <id>]",
     "  msgraph-axi calendar availability --schedules a@x.com,b@y.com",
     "      [--start <iso>] [--end <iso>] [--interval 30] [--timezone <tz>]",
+    "      availabilityView codes: 0=free 1=tentative 2=busy 3=oof 4=workingElsewhere",
     "  msgraph-axi calendar suggest --attendees a@x.com,b@y.com",
     "      [--duration 60] [--start <iso>] [--end <iso>] [--candidates 5] [--timezone <tz>]",
+    "",
+    "  --timezone expects an IANA name (Europe/Amsterdam) and defaults to your mailbox",
+    "  time zone (this machine's zone as fallback);",
+    "  --start/--end take a date, a wall clock in that zone, or an offset.",
+    "  suggest (findMeetingTimes) can miss shared/delegated calendars: confirm a",
+    "  slot with availability (getSchedule) before booking.",
     "",
     `flags: ${GLOBAL_FLAGS}`,
   ].join("\n"),
@@ -206,6 +218,9 @@ const COMMAND_HELP: Record<string, string> = {
     "",
     "  msgraph-axi user get <upn>",
     "      name, job title, department, location, contact info and manager",
+    "  msgraph-axi user search <term> [--limit N] [--full]",
+    "      directory lookup by display name, first/last name, mail or upn prefix",
+    "      e.g. msgraph-axi user search alex",
     "",
     `flags: ${GLOBAL_FLAGS}`,
   ].join("\n"),

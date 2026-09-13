@@ -10,7 +10,22 @@ import {
   calendarSuggest,
   calendarUpdate,
 } from "../src/commands/calendar.js";
-import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls } from "./helpers.js";
+import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls, type TestBackend } from "./helpers.js";
+
+/** Parse the `--body` payload of the given m365 argv. */
+function requestBody(call: string[]): Record<string, unknown> {
+  return JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<string, unknown>;
+}
+
+/** Requests that mutate the mailbox — the read-only lookups do not count. */
+function writeCalls(context: TestBackend): string[][] {
+  const writeMethods = ["post", "put", "patch", "delete"];
+  return m365Calls(context).filter(
+    (call) =>
+      call[0] === "request" &&
+      writeMethods.includes(call[call.indexOf("--method") + 1] ?? ""),
+  );
+}
 
 describe("calendar list", () => {
   it("lists calendars with id and name", async () => {
@@ -108,7 +123,7 @@ describe("calendar create", () => {
         ctx,
       );
       expect(out.execute).toBe(false);
-      expect(m365Calls(ctx).length).toBe(0);
+      expect(writeCalls(ctx).length).toBe(0);
     } finally {
       cleanupContext(ctx);
     }
@@ -209,7 +224,7 @@ describe("calendar update", () => {
       const blocked = await calendarUpdate(["evt-1", "--subject", "Renamed"], ctx);
       expect(blocked.execute).toBe(false);
       await expectAxiError(calendarUpdate(["evt-1"], ctx), "VALIDATION_ERROR");
-      expect(m365Calls(ctx).length).toBe(0);
+      expect(writeCalls(ctx).length).toBe(0);
     } finally {
       cleanupContext(ctx);
     }
@@ -344,8 +359,8 @@ describe("calendar suggest", () => {
       expect(rows[0]).toMatchObject({
         start: "2026-03-16T09:00:00",
         end: "2026-03-16T10:00:00",
-        confidence: "90%",
-        available: "1/2",
+        confidence: "100%",
+        available: "2/3",
         organizer: "free",
       });
       expect(rows[0].reason).toBeUndefined();
@@ -382,6 +397,197 @@ describe("calendar suggest", () => {
     const ctx = makeContext();
     try {
       await expectAxiError(calendarSuggest([], ctx), "VALIDATION_ERROR");
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+});
+
+describe("calendar time zone handling", () => {
+  it("defaults to the mailbox time zone when --timezone is omitted", async () => {
+    const ctx = makeContext({ FAKE_M365_TIMEZONE: "Europe/Amsterdam" });
+    try {
+      await calendarCreate(
+        [
+          "--subject",
+          "Review",
+          "--start",
+          "2026-03-15T12:00:00",
+          "--end",
+          "2026-03-15T13:00:00",
+          "--execute",
+        ],
+        ctx,
+      );
+      const body = requestBody(lastM365Call(ctx));
+      expect(body.start).toEqual({
+        dateTime: "2026-03-15T12:00:00",
+        timeZone: "Europe/Amsterdam",
+      });
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("prefers an explicit --timezone over the mailbox setting", async () => {
+    const ctx = makeContext({ FAKE_M365_TIMEZONE: "Europe/Amsterdam" });
+    try {
+      const out = await calendarCreate(
+        [
+          "--subject",
+          "Review",
+          "--start",
+          "2026-03-15T12:00:00",
+          "--end",
+          "2026-03-15T13:00:00",
+          "--timezone",
+          "UTC",
+        ],
+        ctx,
+      );
+      expect(
+        (out.preview as Record<string, unknown>).start,
+      ).toEqual({ dateTime: "2026-03-15T12:00:00", timeZone: "UTC" });
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("converts a bare local agenda bound for the strict backend", async () => {
+    const ctx = makeContext({ FAKE_M365_TIMEZONE: "Europe/Amsterdam" });
+    try {
+      await calendarAgenda(
+        ["--start", "2026-09-15T00:00:00", "--end", "2026-09-16T00:00:00"],
+        ctx,
+      );
+      expect(lastM365Call(ctx)).toEqual(
+        expect.arrayContaining([
+          "--timeZone",
+          "Europe/Amsterdam",
+          "--startDateTime",
+          "2026-09-14T22:00:00.000Z",
+          "--endDateTime",
+          "2026-09-15T22:00:00.000Z",
+        ]),
+      );
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("documents the availabilityView codes and the zone it used", async () => {
+    const ctx = makeContext({ FAKE_M365_TIMEZONE: "Europe/Amsterdam" });
+    try {
+      const out = await calendarAvailability(["--schedules", "a@x.com"], ctx);
+      expect(out.timezone).toBe("Europe/Amsterdam");
+      expect(out.legend).toEqual([
+        "0=free",
+        "1=tentative",
+        "2=busy",
+        "3=oof",
+        "4=workingElsewhere",
+      ]);
+      const body = requestBody(lastM365Call(ctx));
+      expect(body.startTime).toMatchObject({ timeZone: "Europe/Amsterdam" });
+      expect(String((body.startTime as Record<string, unknown>).dateTime)).toMatch(
+        /T08:00:00$/,
+      );
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it.each([
+    ["15-09-2026"],
+    ["2026/09/15"],
+    ["next tuesday"],
+  ])("rejects the non-ISO bound %s", async (value) => {
+    const ctx = makeContext();
+    try {
+      await expectAxiError(calendarAgenda(["--start", value], ctx), "VALIDATION_ERROR");
+      await expectAxiError(
+        calendarCreate(
+          ["--subject", "X", "--start", value, "--end", "2026-03-15T13:00:00"],
+          ctx,
+        ),
+        "VALIDATION_ERROR",
+      );
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+});
+
+describe("calendar show-as", () => {
+  it("creates an event that reads as free", async () => {
+    const ctx = makeContext();
+    try {
+      const out = await calendarCreate(
+        [
+          "--subject",
+          "Test vanuit msgraph-axi",
+          "--start",
+          "2026-03-15T13:00:00",
+          "--end",
+          "2026-03-15T13:05:00",
+          "--show-as",
+          "free",
+          "--execute",
+        ],
+        ctx,
+      );
+      expect(out).toMatchObject({ created: true, id: "new-event-id" });
+      expect(requestBody(lastM365Call(ctx)).showAs).toBe("free");
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("accepts the camelCase alias and rejects unknown states", async () => {
+    const ctx = makeContext();
+    try {
+      const preview = await calendarCreate(
+        [
+          "--subject",
+          "X",
+          "--start",
+          "2026-03-15T13:00:00",
+          "--end",
+          "2026-03-15T14:00:00",
+          "--showAs",
+          "workingElsewhere",
+        ],
+        ctx,
+      );
+      expect((preview.preview as Record<string, unknown>).showAs).toBe("workingElsewhere");
+      await expectAxiError(
+        calendarCreate(
+          [
+            "--subject",
+            "X",
+            "--start",
+            "2026-03-15T13:00:00",
+            "--end",
+            "2026-03-15T14:00:00",
+            "--show-as",
+            "not-a-state",
+          ],
+          ctx,
+        ),
+        "VALIDATION_ERROR",
+      );
+      expect(writeCalls(ctx).length).toBe(0);
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("can clear the state on update", async () => {
+    const ctx = makeContext();
+    try {
+      await calendarUpdate(["evt-1", "--show-as", "busy", "--execute"], ctx);
+      const body = requestBody(lastM365Call(ctx));
+      expect(body).toEqual({ showAs: "busy" });
     } finally {
       cleanupContext(ctx);
     }

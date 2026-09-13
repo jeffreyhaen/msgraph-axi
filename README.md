@@ -59,6 +59,7 @@ The underlying CLI for Microsoft 365 requires an Entra ID application registrati
    If your organization already has an Entra app registered for CLI / developer use (or you create one manually):
    - Set redirect URI (Public client/mobile & desktop): `https://login.microsoftonline.com/common/oauth2/nativeclient`
    - Grant **Delegated** Microsoft Graph permissions: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `User.Read`
+     (optional: `MailboxSettings.Read` so `calendar --timezone` can default to your mailbox time zone instead of this machine's)
    - Save the App ID and Tenant in your CLI config:
      ```sh
      m365 cli config set --key clientId --value "<your-app-id>"
@@ -88,11 +89,12 @@ See [docs/authentication.md](docs/authentication.md) for headless / CI flows and
 | `mail attachment get <id> --message <id> [--out <path>]` | download an attachment |
 | `calendar list` | calendars of the signed-in (or `--user`) account |
 | `calendar agenda [--start] [--end] [--calendar]` | events, default today..+7d |
-| `calendar create \| update [--execute]` | events via the Graph REST bridge |
+| `calendar create \| update [--execute]` | events via the Graph REST bridge; `--show-as free\|tentative\|busy\|oof\|workingElsewhere` |
 | `calendar cancel \| delete [--execute --confirm <id>]` | destructive, double-gated |
-| `calendar availability --schedules a@x.com` | free/busy via `getSchedule` |
-| `calendar suggest --attendees a@x.com --duration 60` | meeting slot search via `findMeetingTimes` |
+| `calendar availability --schedules a@x.com` | free/busy via `getSchedule`, `availabilityView` plus a code legend |
+| `calendar suggest --attendees a@x.com --duration 60` | meeting slot search via `findMeetingTimes`; confirm a slot with `availability` |
 | `user get <upn>` | profile plus manager lookup |
+| `user search <term>` | directory lookup by name, mail or upn prefix |
 | `raw <path> [--method] [--body] [--execute]` | any Graph endpoint through `m365 request` |
 
 ## Conventions
@@ -103,6 +105,10 @@ See [docs/authentication.md](docs/authentication.md) for headless / CI flows and
   truncate at 200 chars and lift with `--full`.
 - Read-only by default; writes require `--execute`, destructive writes also
   `--confirm <id>`.
+- Calendar reads and writes work in your mailbox time zone by default (Graph
+  `mailboxSettings`, then this machine's zone, then UTC); pass `--timezone <tz>` to
+  override. `--start`/`--end` accept `2026-03-15`, a wall clock in that zone
+  (`2026-03-15T13:00:00`) or an offset (`2026-03-15T13:00:00+02:00`).
 
 ## Development
 

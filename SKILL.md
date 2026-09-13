@@ -71,9 +71,11 @@ msgraph-axi calendar agenda [--start <iso>] [--end <iso>] [--calendar <id|name>]
                             [--timezone <tz>] [--user <upn>] [--limit 20] [--fields a,b]
 msgraph-axi calendar create --subject "..." --start <iso> --end <iso>
                             [--body "..."] [--location "..."] [--attendees a@x.com]
+                            [--show-as free|tentative|busy|oof|workingElsewhere]
                             [--timezone <tz>] [--calendar <id>] [--execute]
 msgraph-axi calendar update <id> [--subject "..."] [--start <iso>] [--end <iso>]
-                               [--location "..."] [--body "..."] [--execute]
+                               [--location "..."] [--body "..."] [--show-as <state>]
+                               [--execute]
 msgraph-axi calendar cancel <id> [--comment "..."] [--execute --confirm <id>]
 msgraph-axi calendar delete <id> [--permanent] [--execute --confirm <id>]
 msgraph-axi calendar availability --schedules a@x.com,b@y.com
@@ -85,12 +87,32 @@ msgraph-axi calendar suggest --attendees a@x.com,b@y.com
 ```
 
 `calendar agenda` defaults to today through the next 7 days, sorted by start. Event
-cells carry the time zone: `2026-03-15T12:00:00 CET`. `calendar availability` maps to
-Graph `getSchedule` and summarizes each schedule as `availabilityView` plus a `busy`
-count; `--full` expands the raw schedule items. `calendar suggest` maps to Graph
-`findMeetingTimes` and returns candidate slots with confidence and an `x/y` available
-count; `--full` breaks the availability down per attendee. When the user asks to
-"find a time for …", use `suggest`, then create the event with `calendar create`.
+cells carry the time zone: `2026-03-15T12:00:00 CET`.
+
+Every calendar command works in your mailbox time zone by default (Graph
+`mailboxSettings`, falling back to this machine's zone, then UTC) and reports it in the
+`timezone` field; pass `--timezone <tz>` to override. `--start`/`--end` accept a date
+(`2026-03-15`), a wall clock in that zone (`2026-03-15T13:00:00`) or an explicit offset
+(`2026-03-15T13:00:00+02:00`); anything else is rejected as a validation error, so a
+bare `T00:00:00` never silently becomes UTC.
+
+`calendar availability` maps to Graph `getSchedule` and summarizes each schedule as
+`availabilityView` plus a `busy` count; the response carries a `legend` for those codes
+(`0=free 1=tentative 2=busy 3=oof 4=workingElsewhere`) and `--full` expands the raw
+schedule items. `calendar suggest` maps to Graph `findMeetingTimes` and returns
+candidate slots with confidence (a percentage, as Graph reports it) and an `x/y`
+available count that includes the organizer; `--full` breaks the availability down per
+attendee.
+
+`suggest` only knows the calendars Graph hands to `findMeetingTimes`: it misses shared
+and delegated calendars that `availability` does see, so it can propose a slot where
+you are already busy. Treat `suggest` as a hint and confirm the chosen slot with
+`availability --schedules <you>,<attendee>` before creating the event with
+`calendar create`.
+
+`--show-as` sets how the event appears in free/busy: `free` keeps a 5-minute test or
+reminder slot from blocking the room, `tentative`, `busy` (default), `oof` and
+`workingElsewhere`.
 
 ### Meetings and write gates
 
@@ -109,11 +131,15 @@ start/end, location and attendees from it and pass them explicitly.
 
 ```sh
 msgraph-axi user get <upn>
+msgraph-axi user search <term> [--limit 15]
 ```
 
-Returns name, job title, department, office location, contact info and the manager
-(`displayName <mail>`) — one call to answer "who is this person and who do they
-report to?". Reading other people's profiles and managers may require
+`user get` returns name, job title, department, office location, contact info and the
+manager (`displayName <mail>`) — one call to answer "who is this person and who do they
+report to?". `user search` finds people by display-name, first-name, last-name, mail or
+upn **prefix** (one word: `alex`, `chen`, `a.chen`), which is the fastest way to turn
+a first name from a meeting request into an upn for `calendar create --attendees`.
+Reading other people's profiles and managers may require
 `User.Read.All` or `Directory.Read.All` depending on the tenant; the signed-in
 user only needs `User.Read`.
 

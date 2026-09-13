@@ -10,9 +10,16 @@ import {
 import {
   cell,
   formatDateTime,
-  localDayIso,
   parseFields,
 } from "../toon.js";
+import {
+  addDays,
+  hasExplicitOffset,
+  isBareDateTime,
+  isDateOnly,
+  localToUtcIso,
+  wallClock,
+} from "../time.js";
 
 export interface CalendarContext {
   m365: PnpCliBackend;
@@ -67,6 +74,7 @@ const WRITE_FLAGS: Record<string, FlagDef> = {
   timezone: { type: "string" },
   calendar: { type: "string" },
   importance: { type: "string" },
+  "show-as": { type: "string", aliases: ["showAs"] },
   execute: { type: "boolean" },
 };
 
@@ -142,8 +150,24 @@ export async function calendarAgenda(
   const parsed = parseFlags(args, AGENDA_FLAGS);
   const full = flagBool(parsed, "full", AGENDA_FLAGS);
   const limit = Math.floor(flagNumber(parsed, "limit", AGENDA_FLAGS, 20));
-  const start = flagString(parsed, "start", AGENDA_FLAGS) ?? localDayIso(0);
-  const end = flagString(parsed, "end", AGENDA_FLAGS) ?? localDayIso(7);
+  const userFlag = flagString(parsed, "user", AGENDA_FLAGS);
+  const timezone = await context.m365.timeZone(
+    userFlag,
+    flagString(parsed, "timezone", AGENDA_FLAGS),
+  );
+  const today = wallClock(new Date(), timezone).slice(0, 10);
+  const start = agendaBound(
+    flagString(parsed, "start", AGENDA_FLAGS),
+    "start",
+    timezone,
+    localToUtcIso(`${today}T00:00:00`, timezone),
+  );
+  const end = agendaBound(
+    flagString(parsed, "end", AGENDA_FLAGS),
+    "end",
+    timezone,
+    localToUtcIso(`${addDays(today, 7)}T00:00:00`, timezone),
+  );
 
   const m365Args = ["outlook", "event", "list"];
   const calendar = flagString(parsed, "calendar", AGENDA_FLAGS);
@@ -153,16 +177,14 @@ export async function calendarAgenda(
       calendar,
     );
   }
-  const timezone = flagString(parsed, "timezone", AGENDA_FLAGS);
-  if (timezone !== undefined) {
-    m365Args.push("--timeZone", timezone);
-  }
+  // The backend is strict about `--startDateTime`, so always hand it a zone.
+  m365Args.push("--timeZone", timezone);
   m365Args.push(
     "--startDateTime",
     start,
     "--endDateTime",
     end,
-    ...(await context.m365.userArgs(flagString(parsed, "user", AGENDA_FLAGS))),
+    ...(await context.m365.userArgs(userFlag)),
   );
 
   const items = await context.m365.runJsonArray<GraphEvent>(m365Args);
@@ -184,6 +206,7 @@ export async function calendarAgenda(
     events: rows,
     count: rows.length,
     window: `${start}..${end}`,
+    timezone,
   };
   if (shown.length < items.length) {
     out.truncated = true;
@@ -209,7 +232,10 @@ export async function calendarCreate(
       ],
     );
   }
-  const timezone = flagString(parsed, "timezone", WRITE_FLAGS);
+  const timezone = await context.m365.timeZone(
+    flagString(parsed, "user", WRITE_FLAGS),
+    flagString(parsed, "timezone", WRITE_FLAGS),
+  );
   const body = buildEventBody(parsed, WRITE_FLAGS, timezone, true);
   const execute = flagBool(parsed, "execute", WRITE_FLAGS);
   if (!execute) {
@@ -242,7 +268,10 @@ export async function calendarUpdate(
     );
   }
   const id = positionals[0];
-  const timezone = flagString(parsed, "timezone", WRITE_FLAGS);
+  const timezone = await context.m365.timeZone(
+    flagString(parsed, "user", WRITE_FLAGS),
+    flagString(parsed, "timezone", WRITE_FLAGS),
+  );
   const body = buildEventBody(parsed, WRITE_FLAGS, timezone, false);
   if (Object.keys(body).length === 0) {
     throw new AxiError(
@@ -345,16 +374,30 @@ export async function calendarAvailability(
       ['Example: msgraph-axi calendar availability --schedules a@x.com,b@x.com'],
     );
   }
-  const timezone = flagString(parsed, "timezone", AVAIL_FLAGS) ?? "UTC";
+  const timezone = await context.m365.timeZone(
+    flagString(parsed, "user", AVAIL_FLAGS),
+    flagString(parsed, "timezone", AVAIL_FLAGS),
+  );
   const interval = Math.floor(flagNumber(parsed, "interval", AVAIL_FLAGS, 30));
+  const today = wallClock(new Date(), timezone).slice(0, 10);
   const body = {
     schedules: schedules.split(",").map((s) => s.trim()).filter(Boolean),
     startTime: {
-      dateTime: flagString(parsed, "start", AVAIL_FLAGS) ?? localDayIso(0, 8),
+      dateTime: graphBound(
+        flagString(parsed, "start", AVAIL_FLAGS),
+        "start",
+        timezone,
+        `${today}T08:00:00`,
+      ),
       timeZone: timezone,
     },
     endTime: {
-      dateTime: flagString(parsed, "end", AVAIL_FLAGS) ?? localDayIso(0, 18),
+      dateTime: graphBound(
+        flagString(parsed, "end", AVAIL_FLAGS),
+        "end",
+        timezone,
+        `${today}T18:00:00`,
+      ),
       timeZone: timezone,
     },
     availabilityViewInterval: interval,
@@ -395,7 +438,13 @@ export async function calendarAvailability(
     }
     return row;
   });
-  return { schedules: rows, count: rows.length, interval };
+  return {
+    schedules: rows,
+    count: rows.length,
+    interval,
+    timezone,
+    legend: AVAILABILITY_LEGEND,
+  };
 }
 
 interface MeetingSuggestion {
@@ -437,14 +486,24 @@ export async function calendarSuggest(
   const full = flagBool(parsed, "full", SUGGEST_FLAGS);
   const duration = Math.floor(flagNumber(parsed, "duration", SUGGEST_FLAGS, 60));
   const candidates = Math.floor(flagNumber(parsed, "candidates", SUGGEST_FLAGS, 5));
-  const timezone = flagString(parsed, "timezone", SUGGEST_FLAGS) ?? "UTC";
+  const userFlag = flagString(parsed, "user", SUGGEST_FLAGS);
+  const timezone = await context.m365.timeZone(
+    userFlag,
+    flagString(parsed, "timezone", SUGGEST_FLAGS),
+  );
   const nowPlusHour = new Date(Date.now() + 60 * 60 * 1000);
-  const start =
-    flagString(parsed, "start", SUGGEST_FLAGS) ??
-    `${nowPlusHour.toISOString().slice(0, 16)}:00`;
-  const end =
-    flagString(parsed, "end", SUGGEST_FLAGS) ??
-    new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const start = graphBound(
+    flagString(parsed, "start", SUGGEST_FLAGS),
+    "start",
+    timezone,
+    `${wallClock(nowPlusHour, timezone).slice(0, 16)}:00`,
+  );
+  const end = graphBound(
+    flagString(parsed, "end", SUGGEST_FLAGS),
+    "end",
+    timezone,
+    wallClock(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), timezone),
+  );
   const body = {
     attendees: attendees
       .split(",")
@@ -463,9 +522,7 @@ export async function calendarSuggest(
       ],
     },
   };
-  const userArgs = await context.m365.userArgs(
-    flagString(parsed, "user", SUGGEST_FLAGS),
-  );
+  const userArgs = await context.m365.userArgs(userFlag);
   const user = userArgs[1] ?? "me";
   const response = await context.m365.runJson<MeetingTimeResponse>([
     "request",
@@ -489,15 +546,20 @@ export async function calendarSuggest(
   const rows = suggestions.map((suggestion) => {
     const slot = suggestion.meetingTimeSlot;
     const availability = suggestion.attendeeAvailability ?? [];
-    const available = availability.filter(
+    const organizer = suggestion.organizerAvailability ?? "";
+    // Graph reports the attendees only, so add the organizer explicitly and the
+    // ratio reads as "everyone free" instead of "the one attendee is free".
+    const attendeeFree = availability.filter(
       (a) => a.availability === "free" || a.availability === "unknown",
     ).length;
+    const organizerFree = organizer === "free" || organizer === "unknown";
+    const total = availability.length + (organizer === "" ? 0 : 1);
     const row: Record<string, unknown> = {
       start: slot?.start?.dateTime ?? "",
       end: slot?.end?.dateTime ?? "",
-      confidence: `${Math.round((suggestion.confidence ?? 0) * 100)}%`,
-      available: `${available}/${availability.length}`,
-      organizer: suggestion.organizerAvailability ?? "",
+      confidence: `${Math.round(suggestion.confidence ?? 0)}%`,
+      available: `${attendeeFree + (organizerFree ? 1 : 0)}/${total}`,
+      organizer,
     };
     if (full) {
       row.reason = suggestion.suggestionReason ?? "";
@@ -514,10 +576,10 @@ export async function calendarSuggest(
 function buildEventBody(
   parsed: ReturnType<typeof parseFlags>,
   defs: Record<string, FlagDef>,
-  timezone: string | undefined,
+  timezone: string,
   includeAll: boolean,
 ): Record<string, unknown> {
-  const timeZone = timezone ?? "UTC";
+  const timeZone = timezone;
   const body: Record<string, unknown> = {};
   const subject = flagString(parsed, "subject", defs);
   const start = flagString(parsed, "start", defs);
@@ -525,16 +587,17 @@ function buildEventBody(
   const location = flagString(parsed, "location", defs);
   const attendees = flagString(parsed, "attendees", defs);
   const importance = flagString(parsed, "importance", defs);
+  const showAs = showAsValue(parsed, defs);
   const bodyFlag = flagString(parsed, "body", defs);
 
   if (subject !== undefined || includeAll) {
     body.subject = subject ?? "";
   }
   if (start !== undefined || includeAll) {
-    body.start = { dateTime: start ?? "", timeZone };
+    body.start = { dateTime: graphBound(start, "start", timeZone), timeZone };
   }
   if (end !== undefined || includeAll) {
-    body.end = { dateTime: end ?? "", timeZone };
+    body.end = { dateTime: graphBound(end, "end", timeZone), timeZone };
   }
   if (location !== undefined) {
     body.location = { displayName: location };
@@ -548,6 +611,9 @@ function buildEventBody(
   }
   if (importance !== undefined) {
     body.importance = importance;
+  }
+  if (showAs !== undefined) {
+    body.showAs = showAs;
   }
   if (bodyFlag !== undefined) {
     body.body = { contentType: "text", content: resolveBody(bodyFlag) };
@@ -629,3 +695,85 @@ function graphBase(userArgs: string[]): string {
 }
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Free/busy states Graph accepts for `showAs`. */
+const SHOW_AS_VALUES = ["free", "tentative", "busy", "oof", "workingElsewhere"];
+
+/** `getSchedule` availabilityView codes, so a reader needs no Graph docs. */
+const AVAILABILITY_LEGEND = [
+  "0=free",
+  "1=tentative",
+  "2=busy",
+  "3=oof",
+  "4=workingElsewhere",
+];
+
+const ISO_HINT =
+  "Use ISO 8601: 2026-03-15T13:00:00 (wall clock in --timezone), 2026-03-15T13:00:00+02:00 or 2026-03-15";
+
+function showAsValue(
+  parsed: ReturnType<typeof parseFlags>,
+  defs: Record<string, FlagDef>,
+): string | undefined {
+  const value = flagString(parsed, "show-as", defs) ?? flagString(parsed, "showAs", defs);
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  const match = SHOW_AS_VALUES.find(
+    (candidate) => candidate.toLowerCase() === normalized.toLowerCase(),
+  );
+  if (match === undefined) {
+    throw new AxiError(
+      `--show-as expects one of ${SHOW_AS_VALUES.join(", ")} (got "${value}")`,
+      "VALIDATION_ERROR",
+      ["Use --show-as free to keep the slot visible as free/busy-neutral"],
+    );
+  }
+  return match;
+}
+
+/**
+ * Validate a `--start`/`--end` value. A bare wall clock is kept as-is for Graph
+ * (which takes it together with `timeZone`) but converted to a `Z` instant for
+ * the m365 backend, which rejects zone-less date-times.
+ */
+function bound(
+  value: string,
+  flag: string,
+  timezone: string,
+  toUtc: boolean,
+): string {
+  const trimmed = value.trim();
+  if (isDateOnly(trimmed) || hasExplicitOffset(trimmed)) {
+    return trimmed;
+  }
+  if (isBareDateTime(trimmed)) {
+    return toUtc ? localToUtcIso(trimmed, timezone) : trimmed;
+  }
+  throw new AxiError(
+    `--${flag} is not a valid ISO date-time: ${value}`,
+    "VALIDATION_ERROR",
+    [ISO_HINT],
+  );
+}
+
+/** `--start`/`--end` for a Graph payload (wall clock plus `timeZone`). */
+function graphBound(
+  value: string | undefined,
+  flag: string,
+  timezone: string,
+  fallback = "",
+): string {
+  return value === undefined ? fallback : bound(value, flag, timezone, false);
+}
+
+/** `--start`/`--end` for the m365 backend, whose date-times need an offset. */
+function agendaBound(
+  value: string | undefined,
+  flag: string,
+  timezone: string,
+  fallback: string,
+): string {
+  return value === undefined ? fallback : bound(value, flag, timezone, true);
+}

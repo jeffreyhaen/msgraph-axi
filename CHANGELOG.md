@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `calendar suggest`: report Graph's confidence as a percentage again (it was
+  multiplied by 100, so `100` printed as `10000%`); the mock fixture now feeds
+  real Graph values, which is why the wrong scale went unnoticed.
+- `calendar agenda`: accept a bare local `--start`/`--end` instead of failing with
+  the backend's "not a valid ISO date-time" error.
+- Errors: only suggest `auth status` for authentication failures. A `403` now points
+  at missing Graph permissions and a bad flag value at the input, instead of sending
+  the caller to the connection.
+
+### Added
+
+- Calendar commands default to your mailbox time zone (Graph `mailboxSettings`,
+  falling back to this machine's zone, then UTC) and echo the zone they used, so
+  times are no longer silently read or written as UTC. `--timezone` still wins.
+- `calendar create`/`update`: `--show-as free|tentative|busy|oof|workingElsewhere`
+  sets the free/busy state of the event.
+- `calendar availability`: a `legend` for the `availabilityView` codes and a
+  `timezone` field for the window it queried.
+- `calendar suggest`: the `x/y` available count includes the organizer, so `2/2`
+  reads as "everyone free" rather than counting attendees only.
+- `user search <term>`: directory lookup by display-name, first-name, last-name,
+  mail or upn prefix (with `--limit`).
+
+### Documentation & Infrastructure
+
+- Document the time-zone precedence, the `--start`/`--end` formats, the
+  `availabilityView` legend and the `suggest` versus `availability` difference in
+  `README.md`, `SKILL.md` and `calendar --help`.
+
 ## [0.1.1] - 2026-09-13
 
 ### Fixed
