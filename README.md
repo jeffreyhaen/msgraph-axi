@@ -14,12 +14,22 @@ calendar first, with a raw Graph bridge for everything else. Built on the
 [CLI for Microsoft 365](https://pnp.github.io/cli-microsoft365/) (`m365`) as a single
 backend, following the [AXI](https://github.com/kunchenguid/axi) design principles.
 
-## Why not an MCP server
+## Why AXI: Comparing Interfaces for Agents
 
-A Microsoft Graph MCP server loads its full schema into the agent's context window on every
-turn (~25k-40k tokens before any work is done). A skill-based AXI costs ~55 tokens until the
-agent actually needs it, outputs compact [TOON](https://toonformat.dev/) instead of bloated
-raw Graph JSON payloads, and enforces dry-run safety gates on mutating actions.
+AI agents interact with external services through three main paradigms: raw human-oriented CLIs, MCP servers, or agent-first CLIs ([AXI](https://axi.md/)). Across extensive [AXI benchmark studies](https://axi.md/) (over 900 evaluation runs), principled agent CLIs consistently achieve higher task success at a fraction of the token cost:
+
+| Interface | Context Overhead (Turn 0) | Output Format | Measured Payload (Benchmark) | Mutation Safety | Workflow Guidance |
+|---|---|---|---|---|---|
+| **`msgraph-axi` (Skill + CLI)** | **~55 tokens** (on-demand) | **TOON** (concise tables) | **-62.0% average payload reduction** (up to -77.8% on mail listings) | ✅ **Dry-run by default**; `--execute` / `--confirm` gates | Structured `{ error, code, help[] }` suggestions |
+| **Raw CLI** (`m365`) | ~0 tokens | Verbose JSON / ASCII tables | Baseline (huge Graph OData payloads, e.g. 25,406 chars for mail list) | ❌ Direct mutations without dry-run safety gates | Human-oriented `--help` and exit codes |
+| **Graph MCP Server** | **~25,000–35,000 tokens** (100+ eager tool schemas) | JSON-RPC | Highest overhead (full schemas resent every turn) | Varies by server implementation | Tool schema validation errors |
+
+### Why this matters
+
+- **Zero context bloat**: An eager Microsoft Graph MCP server loads dozens of complex tool schemas into context on *every single request* (~25k–40k tokens before any work is done). A skill-based AXI costs just ~55 tokens until actually used.
+- **Payload optimization**: Microsoft Graph responses are notorious for deep nesting and noisy OData metadata (`@odata.context`, `@odata.etag`, etc.). `msgraph-axi` strips noise, truncates long bodies (with `--full` escape hatch), and outputs [TOON](https://toonformat.dev/) for ~40% token savings over raw JSON.
+- **Mutation safeguards**: Agents should never accidentally send an email or delete a calendar item. Write actions default to dry-run previews and require `--execute`. Destructive actions require `--execute --confirm <id>`.
+- **Fewer turns**: Pre-computed aggregations (such as thread grouping and free/busy summaries) eliminate round trips that raw CLI or MCP agents spend extra turns resolving. In AXI benchmarks, AXI CLIs reduce turns by ~50% and overall task cost by up to 66% compared to MCP.
 
 ## Install & Setup
 
@@ -116,6 +126,7 @@ smoke tests need `m365 login`; the fixture can be pointed at with
 `MSGRAPH_AXI_M365_BIN`.
 
 - [AXI — agent eXperience interface](https://axi.md/) · [kunchenguid/axi](https://github.com/kunchenguid/axi)
+- [TOON — token-optimized object notation](https://toonformat.dev/) · [toonformat/toon](https://github.com/toonformat/toon)
 - [CLI for Microsoft 365](https://pnp.github.io/cli-microsoft365/) — the backend
 - [Microsoft Graph](https://learn.microsoft.com/en-us/graph/overview) — the platform
 
