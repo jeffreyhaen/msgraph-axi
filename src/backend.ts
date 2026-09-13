@@ -68,15 +68,26 @@ export interface BodyArgument {
 }
 
 /**
- * A `--body` value that survives the platform: inline when it fits, otherwise a
- * temp file the backend reads with `@file`.
+ * A `--body` value that survives the platform. On Windows every payload travels
+ * as a file: cmd.exe mangles an argument that mixes quotes with shell
+ * metacharacters (`<`, `>`, `&`, `|`, `^`, `%`, `!`) or a line break, and JSON
+ * always carries quotes. Elsewhere argv is passed verbatim.
+ *
+ * `bodyDir` keeps the payload on disk for inspection (tests, debugging);
+ * without it the file is temporary and removed after the request.
  */
 export function bodyArgument(
   contents: string,
   platform: string = process.platform,
+  bodyDir?: string,
 ): BodyArgument {
-  if (platform !== "win32" || contents.length <= CMD_LINE_LIMIT) {
+  if (platform !== "win32") {
     return { value: contents, cleanup: () => {} };
+  }
+  if (bodyDir !== undefined) {
+    const file = join(bodyDir, "body.json");
+    writeFileSync(file, contents, "utf8");
+    return { value: `@${file}`, cleanup: () => {} };
   }
   const dir = mkdtempSync(join(tmpdir(), "msgraph-axi-body-"));
   const file = join(dir, "body.json");
@@ -87,6 +98,14 @@ export function bodyArgument(
   };
 }
 
+export interface BackendOptions {
+  /**
+   * Keep payload files in this directory instead of a temp dir. Used by tests
+   * and debugging: the payload stays readable after the request finished.
+   */
+  bodyDir?: string;
+}
+
 export class PnpCliBackend {
   private userCache: Promise<string | undefined> | undefined;
   private timeZoneCache = new Map<string, Promise<string>>();
@@ -95,6 +114,7 @@ export class PnpCliBackend {
     private readonly bin: string = process.env.MSGRAPH_AXI_M365_BIN ?? "m365",
     private readonly prefix: string[] = [],
     private readonly env: Record<string, string> | undefined = undefined,
+    private readonly options: BackendOptions = {},
   ) {}
 
   async run(args: string[]): Promise<RunResult> {
@@ -159,7 +179,7 @@ export class PnpCliBackend {
     const argument =
       payload === undefined
         ? undefined
-        : bodyArgument(JSON.stringify(payload));
+        : bodyArgument(JSON.stringify(payload), process.platform, this.options.bodyDir);
     if (argument !== undefined) {
       args.push("--body", argument.value, "--content-type", "application/json");
     }

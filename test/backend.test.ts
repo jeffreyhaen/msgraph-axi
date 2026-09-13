@@ -133,19 +133,20 @@ describe("PnpCliBackend", () => {
     expect(() => assertCmdlineSafeArgs(["a\nb", "x".repeat(9000)], "linux")).not.toThrow();
   });
 
-  it("moves payloads beyond the command line into a temp file", () => {
-    const inline = bodyArgument("short", "win32");
-    expect(inline.value).toBe("short");
-    inline.cleanup();
-
-    const contents = `{"x":"${"y".repeat(9000)}"}`;
-    const file = bodyArgument(contents, "win32");
-    const path = file.value.slice(1);
-    expect(file.value.startsWith("@")).toBe(true);
-    expect(readFileSync(path, "utf8")).toBe(contents);
-    file.cleanup();
+  it("sends every payload as a file on Windows, inline elsewhere", () => {
+    // cmd.exe mangles quotes mixed with shell metacharacters, so nothing travels
+    // on the Windows command line any more.
+    const risky = '{"x":"a<b&c>d"}';
+    const onWindows = bodyArgument(risky, "win32");
+    const path = onWindows.value.slice(1);
+    expect(onWindows.value.startsWith("@")).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(risky);
+    onWindows.cleanup();
     expect(existsSync(path)).toBe(false);
 
-    expect(bodyArgument(contents, "linux").value).toBe(contents);
+    const long = `{"x":"${"y".repeat(9000)}"}`;
+    expect(bodyArgument(long, "win32").value.startsWith("@")).toBe(true);
+    expect(bodyArgument(risky, "linux").value).toBe(risky);
+    expect(bodyArgument(long, "linux").value).toBe(long);
   });
 });

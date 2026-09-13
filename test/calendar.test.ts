@@ -10,12 +10,7 @@ import {
   calendarSuggest,
   calendarUpdate,
 } from "../src/commands/calendar.js";
-import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls, type TestBackend } from "./helpers.js";
-
-/** Parse the `--body` payload of the given m365 argv. */
-function requestBody(call: string[]): Record<string, unknown> {
-  return JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<string, unknown>;
-}
+import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls, requestBody, type TestBackend } from "./helpers.js";
 
 /** Requests that mutate the mailbox — the read-only lookups do not count. */
 function writeCalls(context: TestBackend): string[][] {
@@ -154,7 +149,7 @@ describe("calendar create", () => {
       expect(call.join(" ")).toContain(
         "@graph/users/alice@contoso.com/events",
       );
-      const body = JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<string, unknown>;
+      const body = requestBody(call);
       expect(body.subject).toBe("Review");
       expect((body.start as Record<string, unknown>).timeZone).toBe("UTC");
       expect((body.attendees as Array<Record<string, unknown>>)[0]).toMatchObject({
@@ -211,7 +206,7 @@ describe("calendar update", () => {
       const call = lastM365Call(ctx);
       expect(call.slice(0, 3)).toEqual(["request", "--method", "patch"]);
       expect(call.join(" ")).toContain("@graph/users/alice@contoso.com/events/evt-1");
-      const body = JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<string, unknown>;
+      const body = requestBody(call);
       expect(Object.keys(body)).toEqual(["subject"]);
     } finally {
       cleanupContext(ctx);
@@ -316,7 +311,7 @@ describe("calendar availability", () => {
       expect(rows[0].scheduleItems).toBeUndefined();
       const call = lastM365Call(ctx);
       expect(call.join(" ")).toContain("@graph/users/alice@contoso.com/calendar/getSchedule");
-      const body = JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<string, unknown>;
+      const body = requestBody(call);
       expect(body.availabilityViewInterval).toBe(60);
       expect((body.schedules as string[]).length).toBe(2);
     } finally {
@@ -366,7 +361,7 @@ describe("calendar suggest", () => {
       expect(rows[0].reason).toBeUndefined();
       const calls = m365Calls(ctx);
       const call = calls[calls.length - 1];
-      const body = JSON.parse(call[call.indexOf("--body") + 1]) as Record<string, unknown>;
+      const body = requestBody(call);
       expect(body.meetingDuration).toBe("PT60M");
       expect((body.attendees as Array<Record<string, unknown>>).length).toBe(2);
       expect(call.join(" ")).toContain("@graph/users/alice@contoso.com/findMeetingTimes");

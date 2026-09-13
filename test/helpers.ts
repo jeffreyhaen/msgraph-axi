@@ -26,6 +26,8 @@ export function makeContext(
       process.execPath,
       [FIXTURE],
       { FAKE_M365_LOG: logFile, ...env },
+      // Keep payload files inside the context so requestBody() can read them.
+      { bodyDir: dir },
     ),
     user: undefined,
     logFile,
@@ -49,6 +51,16 @@ export function m365Calls(context: TestBackend): string[][] {
 export function lastM365Call(context: TestBackend): string[] {
   const calls = m365Calls(context);
   return calls[calls.length - 1] ?? [];
+}
+
+/**
+ * Parse the `--body` payload of an m365 argv, resolving a `@file` argument the
+ * way the backend does (Windows sends every payload as a file).
+ */
+export function requestBody(call: string[]): Record<string, unknown> {
+  const value = call[call.indexOf("--body") + 1] ?? "{}";
+  const text = value.startsWith("@") ? readFileSync(value.slice(1), "utf8") : value;
+  return JSON.parse(text) as Record<string, unknown>;
 }
 
 export function cleanupContext(context: TestBackend): void {

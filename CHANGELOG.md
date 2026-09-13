@@ -34,11 +34,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Multi-line mail bodies were truncated at the first line break: on Windows the m365
-  backend runs through its `cmd.exe` shim, which cuts an argument at the first line
-  break and caps the command line at 8191 characters, both without an error. Mail is
-  now built as a JSON payload, and the backend refuses any argument that cannot
-  survive the platform instead of sending corrupt data.
+- Payloads now always travel as a file on Windows: cmd.exe also mangled an argument
+  that mixes quotes with shell metacharacters (`<`, `>`, `&`, `|`), so an HTML body or a
+  plain body containing `<` or `&` failed with an opaque error. `--body-type HTML`
+  therefore works on Windows now. Multi-line bodies had the same cause: cmd.exe cut an
+  argument at the first line break and caps the command line at 8191 characters, both
+  without an error, so the backend refuses what it cannot carry instead of sending
+  corrupt data.
 - `calendar suggest`: report Graph's confidence as a percentage again (it was
   multiplied by 100, so `100` printed as `10000%`); the mock fixture now feeds
   real Graph values, which is why the wrong scale went unnoticed.

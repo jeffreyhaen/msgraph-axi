@@ -14,6 +14,7 @@ import {
   expectAxiError,
   lastM365Call,
   makeContext,
+  requestBody,
 } from "./helpers.js";
 
 describe("mail search", () => {
@@ -81,7 +82,7 @@ describe("mail draft", () => {
       );
       expect(out).toMatchObject({ draft: true, id: "draft-1", subject: "Hi" });
       const call = lastM365Call(ctx);
-      const body = JSON.parse(call[call.indexOf("--body") + 1]) as Record<string, unknown>;
+      const body = requestBody(call);
       expect(body.isDraft).toBe(true);
       expect((body.toRecipients as Array<Record<string, unknown>>).length).toBe(2);
       expect((body.ccRecipients as Array<Record<string, unknown>>).length).toBe(1);

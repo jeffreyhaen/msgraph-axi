@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mailDelete, mailList, mailRead, mailSend } from "../src/commands/mail.js";
-import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls } from "./helpers.js";
+import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls, requestBody } from "./helpers.js";
 
 describe("mail list", () => {
   it("defaults to 20 rows with compact fields and truncation hints", async () => {
@@ -166,10 +166,7 @@ describe("mail send", () => {
       expect(urls.some((url) => url.includes("/messages/draft-1/send"))).toBe(false);
       const call = lastM365Call(ctx);
       expect(call.slice(0, 3)).toEqual(["request", "--method", "post"]);
-      const body = JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<
-        string,
-        unknown
-      >;
+      const body = requestBody(call);
       expect(body).toMatchObject({
         subject: "Hi",
         body: { contentType: "text", content: "Hello" },
@@ -207,11 +204,26 @@ describe("mail send", () => {
       );
       const call = lastM365Call(ctx);
       const argument = call[call.indexOf("--body") + 1] ?? "";
-      // The payload must stay JSON: a literal line break in an argv value is
-      // silently truncated by cmd.exe / cross-spawn on Windows.
+      // The payload must stay argv-safe: JSON keeps line breaks escaped, and on
+      // Windows the whole payload travels as a `@file` argument instead.
       expect(argument).not.toMatch(/[\r\n]/);
-      const payload = JSON.parse(argument) as Record<string, unknown>;
-      expect((payload.body as Record<string, unknown>).content).toBe(body);
+      expect((requestBody(call).body as Record<string, unknown>).content).toBe(body);
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("keeps shell metacharacters intact", async () => {
+    const ctx = makeContext();
+    const body = 'Is 5 < 10 && 10 > 5? Yes (100%). "Quoted"';
+    try {
+      await mailSend(
+        ["--to", "a@x.com", "--subject", "Hi", "--body", body, "--execute"],
+        ctx,
+      );
+      const call = lastM365Call(ctx);
+      expect(call[call.indexOf("--body") + 1] ?? "").not.toMatch(/[\r\n]/);
+      expect((requestBody(call).body as Record<string, unknown>).content).toBe(body);
     } finally {
       cleanupContext(ctx);
     }
@@ -238,10 +250,7 @@ describe("mail send", () => {
         ctx,
       );
       const call = lastM365Call(ctx);
-      const payload = JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<
-        string,
-        unknown
-      >;
+      const payload = requestBody(call);
       const attachments = payload.attachments as Array<Record<string, string>>;
       expect(attachments[0]).toMatchObject({
         name: "report.csv",
