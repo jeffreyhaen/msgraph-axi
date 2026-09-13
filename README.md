@@ -130,6 +130,22 @@ Tests run against `test/fixtures/m365-cli.js` — no Microsoft 365 tenant requir
 smoke tests need `m365 login`; the fixture can be pointed at with
 `MSGRAPH_AXI_M365_BIN`.
 
+## Releasing
+
+1. Move the `Unreleased` section in `CHANGELOG.md` under `## [x.y.z] - <date>`.
+2. Bump `version` in `package.json` and `VERSION` in `src/version.ts`.
+3. Commit as `chore: release vX.Y.Z`, then tag and push:
+
+```sh
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push --follow-tags
+```
+
+Pushing the tag runs `.github/workflows/release.yml`: it builds, tests, publishes to
+npm with provenance, and creates the GitHub release with the matching `CHANGELOG.md`
+section as its body (`scripts/release-notes.mjs`). An existing release is left as is,
+so the workflow can be re-run safely.
+
 - [AXI — agent eXperience interface](https://axi.md/) · [kunchenguid/axi](https://github.com/kunchenguid/axi)
 - [TOON — token-optimized object notation](https://toonformat.dev/) · [toonformat/toon](https://github.com/toonformat/toon)
 - [CLI for Microsoft 365](https://pnp.github.io/cli-microsoft365/) — the backend
