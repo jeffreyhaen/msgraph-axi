@@ -81,7 +81,8 @@ See [docs/authentication.md](docs/authentication.md) for headless / CI flows and
 | `auth status\|login\|logout` | m365 sign-in state; device-code and headless logins (see [Authentication](docs/authentication.md)) |
 | `mail list [--folder] [--start] [--end]` | messages with compact defaults |
 | `mail read <id> [--full]` | snippet by default, body with `--full` |
-| `mail send ... [--execute]` | dry-run unless `--execute`; `--draft <id>` sends a saved draft |
+| `mail send ... [--execute]` | dry-run without `--execute`; `--execute` saves a draft, `--send --execute` delivers it |
+| `mail send --draft <id> [--execute]` | deliver a saved draft |
 | `mail delete <id> [--execute --confirm <id>]` | destructive, double-gated |
 | `mail search --search "..."` | Graph message search |
 | `mail draft --to ... [--execute]` | save a draft, review, then `mail send --draft` |
@@ -105,6 +106,11 @@ See [docs/authentication.md](docs/authentication.md) for headless / CI flows and
   truncate at 200 chars and lift with `--full`.
 - Read-only by default; writes require `--execute`, destructive writes also
   `--confirm <id>`.
+- Mail is never delivered by `--execute` alone: `mail send --execute` saves a draft and
+  `--send --execute` delivers it, so a wrong recipient or body stays fixable.
+- Long or multi-line payloads travel as JSON (through a temp file when needed): on
+  Windows the backend is spawned via `cmd.exe`, which silently cuts an argument at a
+  line break, so the CLI refuses such an argument instead of sending corrupt data.
 - Calendar reads and writes work in your mailbox time zone by default (Graph
   `mailboxSettings`, then this machine's zone, then UTC); pass `--timezone <tz>` to
   override. `--start`/`--end` accept `2026-03-15`, a wall clock in that zone

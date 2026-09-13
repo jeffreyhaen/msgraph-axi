@@ -35,7 +35,7 @@ msgraph-axi mail read <id> [--user <upn>] [--full]     # --full adds the body co
 msgraph-axi mail send --to a@x.com,b@y.com --subject "..." --body "..."
                       [--cc a@x.com] [--bcc b@x.com] [--body-type text|HTML]
                       [--importance low|normal|high] [--attach path1,path2]
-                      [--mailbox <upn>] [--sender <upn>] [--execute]
+                      [--mailbox <upn>] [--sender <upn>] [--send] [--execute]
 msgraph-axi mail delete <id> [--user <upn>] [--execute --confirm <id>]
 msgraph-axi mail search --search "<query>" [--user <upn>] [--limit 20]
 msgraph-axi mail draft --to a@x.com --subject "..." --body "..." [--cc a] [--bcc b]
@@ -50,18 +50,43 @@ msgraph-axi mail attachment get <attachmentId> --message <messageId> [--out <pat
 `mail read` shows a snippet only; use `--full` precisely when the body is needed, and
 pass its text back as-is.
 
-`mail search` uses Graph `$search` (subject, body, sender). `mail draft` saves an
-`isDraft` message so the user can review it before `mail send --draft <id>` sends it —
-prefer this over sending directly when the user wants to verify first. `mail thread`
+`mail search` uses Graph `$search` (subject, body, sender). `mail thread`
 returns the whole conversation oldest-first with snippets; `--full` adds bodies.
 `mail attachment get` needs the message id from `mail list`/`mail read`; it writes to
 `./<attachment-name>` unless `--out` is given.
 
 ### Sending mail
 
-`mail send` dry-runs by default: it prints the recipient preview and asks for
-`--execute`. Only run it when the user asked to send. `--body-type HTML` is the default
-only if you pass HTML; plain text is the norm. Recipients are comma-separated.
+Mail is **never** delivered by `--execute` alone. `mail send --execute` saves a draft
+(`sent: false, draft: true` plus the id) and `--send --execute` delivers that draft in
+the same step, so there is always an inspectable message before anything leaves the
+mailbox:
+
+```sh
+msgraph-axi mail draft --to a@x.com --subject "..." --body "..." --execute
+msgraph-axi mail send --draft <id> --execute          # deliver a reviewed draft
+msgraph-axi mail send --to a@x.com --subject "..." --body "..." --execute   # draft only
+msgraph-axi mail send --to a@x.com --subject "..." --body "..." --send --execute
+```
+
+Rules for agents:
+
+- Only deliver mail when the user explicitly asked for *sending*. "Maak een mail"
+  means a draft: report the draft id and the exact recipients and let the user send it.
+- Never invent recipients or addresses; resolve people with `user search <term>` and
+  echo the resolved `upn` back to the user before drafting.
+- Repeat the recipient, subject and a short body summary in your reply, so a wrong
+  address or subject is caught before a human clicks send.
+- `--execute` without `--send` is never a failure: report it as a saved draft, not as
+  a sent mail.
+
+`--body-type HTML` only when you actually pass HTML; plain text is the norm. Recipients
+are comma-separated. `--attach` reads the files and uploads them with the draft (3 MB
+per message, the Graph limit); larger files belong in a link, not an attachment.
+
+A draft created through Graph carries no Outlook signature — signatures live in the
+mail client, not in the mailbox, so nothing is added on the way out. Tell the user to
+paste theirs in Outlook before sending, or include it in `--body` when they ask for it.
 
 ## Calendar
 

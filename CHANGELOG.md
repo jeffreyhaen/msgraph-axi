@@ -6,16 +6,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
+### Changed (breaking)
 
-- `calendar suggest`: report Graph's confidence as a percentage again (it was
-  multiplied by 100, so `100` printed as `10000%`); the mock fixture now feeds
-  real Graph values, which is why the wrong scale went unnoticed.
-- `calendar agenda`: accept a bare local `--start`/`--end` instead of failing with
-  the backend's "not a valid ISO date-time" error.
-- Errors: only suggest `auth status` for authentication failures. A `403` now points
-  at missing Graph permissions and a bad flag value at the input, instead of sending
-  the caller to the connection.
+- `mail send` no longer delivers mail on `--execute` alone. `--execute` now saves a
+  draft and returns `sent: false, draft: true` with the message id; only
+  `--send --execute` (or `mail send --draft <id> --execute` on a reviewed draft)
+  delivers. Sending was irreversible, unreported and only gated by a flag that said
+  nothing about delivery; callers that relied on the old behaviour must add `--send`.
+- `mail send --attach` uploads the files with the draft through Graph instead of the
+  backend send command (3 MB per message, the Graph limit).
 
 ### Added
 
@@ -31,11 +30,34 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `user search <term>`: directory lookup by display-name, first-name, last-name,
   mail or upn prefix (with `--limit`).
 
+### Fixed
+
+- Multi-line mail bodies were truncated at the first line break: on Windows the m365
+  backend runs through its `cmd.exe` shim, which cuts an argument at the first line
+  break and caps the command line at 8191 characters, both without an error. Mail is
+  now built as a JSON payload, and the backend refuses any argument that cannot
+  survive the platform instead of sending corrupt data.
+- `calendar suggest`: report Graph's confidence as a percentage again (it was
+  multiplied by 100, so `100` printed as `10000%`); the mock fixture now feeds
+  real Graph values, which is why the wrong scale went unnoticed.
+- `calendar agenda`: accept a bare local `--start`/`--end` instead of failing with
+  the backend's "not a valid ISO date-time" error.
+- Errors: only suggest `auth status` for authentication failures. A `403` now points
+  at missing Graph permissions and a bad flag value at the input, instead of sending
+  the caller to the connection.
+- `raw --body @payload.json` hands the file to the backend instead of inlining it, so
+  large and multi-line payloads survive on Windows.
+- Payloads beyond the Windows command-line limit travel through a temp `@file`
+  automatically, for every Graph bridge (mail draft, events, getSchedule,
+  findMeetingTimes).
+
 ### Documentation & Infrastructure
 
 - Document the time-zone precedence, the `--start`/`--end` formats, the
   `availabilityView` legend and the `suggest` versus `availability` difference in
   `README.md`, `SKILL.md` and `calendar --help`.
+- `SKILL.md` spells out the draft-first mail flow and the rules agents must follow
+  before delivering mail.
 
 ## [0.1.1] - 2026-09-13
 

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { raw } from "../src/commands/raw.js";
 import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls } from "./helpers.js";
 
@@ -72,6 +75,21 @@ describe("raw", () => {
       await expectAxiError(raw([], ctx), "VALIDATION_ERROR");
     } finally {
       cleanupContext(ctx);
+    }
+  });
+
+  it("hands @file bodies to the backend instead of inlining them", async () => {
+    const ctx = makeContext();
+    const dir = mkdtempSync(join(tmpdir(), "msgraph-axi-raw-"));
+    const file = join(dir, "payload.json");
+    writeFileSync(file, '{\n  "subject": "Hi"\n}\n', "utf8");
+    try {
+      await raw(["me/messages", "--method", "post", "--body", `@${file}`, "--execute"], ctx);
+      const call = lastM365Call(ctx);
+      expect(call[call.indexOf("--body") + 1]).toBe(`@${file}`);
+    } finally {
+      cleanupContext(ctx);
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

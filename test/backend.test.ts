@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AxiError } from "axi-sdk-js";
+import { existsSync, readFileSync } from "node:fs";
+import { assertCmdlineSafeArgs, bodyArgument } from "../src/backend.js";
 import { cleanupContext, expectAxiError, makeContext } from "./helpers.js";
 
 /** Run a command against a fixture that fails with the given message. */
@@ -118,5 +120,32 @@ describe("PnpCliBackend", () => {
   it("still suggests signing in for an expired session", async () => {
     const error = await failureFor("Request failed with status code 401");
     expect(error.suggestions.join(" ")).toContain("auth login");
+  });
+
+  it("refuses arguments cmd.exe would silently truncate", () => {
+    expect(() => assertCmdlineSafeArgs(["ok"], "win32")).not.toThrow();
+    expect(() => assertCmdlineSafeArgs(["a\nb"], "win32")).toThrowError(/line break/);
+    expect(() => assertCmdlineSafeArgs(["a\r\nb"], "win32")).toThrowError(/line break/);
+    expect(() => assertCmdlineSafeArgs(["x".repeat(9000)], "win32")).toThrowError(
+      /Windows limit/,
+    );
+    // POSIX passes argv verbatim, so nothing is unsafe there.
+    expect(() => assertCmdlineSafeArgs(["a\nb", "x".repeat(9000)], "linux")).not.toThrow();
+  });
+
+  it("moves payloads beyond the command line into a temp file", () => {
+    const inline = bodyArgument("short", "win32");
+    expect(inline.value).toBe("short");
+    inline.cleanup();
+
+    const contents = `{"x":"${"y".repeat(9000)}"}`;
+    const file = bodyArgument(contents, "win32");
+    const path = file.value.slice(1);
+    expect(file.value.startsWith("@")).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(contents);
+    file.cleanup();
+    expect(existsSync(path)).toBe(false);
+
+    expect(bodyArgument(contents, "linux").value).toBe(contents);
   });
 });

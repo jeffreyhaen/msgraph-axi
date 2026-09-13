@@ -10,7 +10,7 @@ import {
   project,
   type EmailAddress,
 } from "../toon.js";
-import { mailSendDraft } from "./mailflow.js";
+import { mailSendDraft, createDraftMessage, readAttachments } from "./mailflow.js";
 
 export interface MailContext {
   m365: PnpCliBackend;
@@ -61,6 +61,7 @@ const SEND_FLAGS: Record<string, FlagDef> = {
   mailbox: { type: "string", aliases: ["m"] },
   sender: { type: "string" },
   draft: { type: "string" },
+  send: { type: "boolean" },
   execute: { type: "boolean" },
 };
 
@@ -190,6 +191,9 @@ export async function mailSend(
   const body = flagString(parsed, "body", SEND_FLAGS);
   const draftId = flagString(parsed, "draft", SEND_FLAGS);
   const execute = flagBool(parsed, "execute", SEND_FLAGS);
+  const deliver = flagBool(parsed, "send", SEND_FLAGS);
+  const mailbox = flagString(parsed, "mailbox", SEND_FLAGS);
+  const userFlag = mailbox ?? flagString(parsed, "user", SEND_FLAGS);
 
   if (draftId !== undefined) {
     if (to !== undefined || subject !== undefined || body !== undefined) {
@@ -206,7 +210,7 @@ export async function mailSend(
         help: ["Run with --execute to send the draft"],
       };
     }
-    return mailSendDraft(draftId, flagString(parsed, "user", SEND_FLAGS), context);
+    return mailSendDraft(draftId, userFlag, context);
   }
 
   if (to === undefined || subject === undefined || body === undefined) {
@@ -214,11 +218,13 @@ export async function mailSend(
       "mail send requires --to, --subject and --body",
       "VALIDATION_ERROR",
       [
-        "Example: msgraph-axi mail send --to a@x.com,b@y.com --subject \"Hi\" --body \"...\"",
+        'Example: msgraph-axi mail send --to a@x.com,b@y.com --subject "Hi" --body "..."',
+        "Without --send this only saves a draft: add --send with --execute to deliver it",
       ],
     );
   }
 
+  const attach = flagString(parsed, "attach", SEND_FLAGS) ?? "";
   const preview: Record<string, unknown> = {
     to: to,
     cc: flagString(parsed, "cc", SEND_FLAGS) ?? "",
@@ -226,48 +232,53 @@ export async function mailSend(
     subject: subject,
     bodyChars: body.length,
     bodyPreview: String(cell(body, true)).slice(0, 120),
-    attachments: flagString(parsed, "attach", SEND_FLAGS) ?? "",
+    attachments: attach,
+    // Without --send this call only saves a draft, never delivers mail.
+    sends: deliver,
   };
 
   if (!execute) {
     return {
       preview,
       execute: false,
-      help: ["Run with --execute to send the mail"],
+      help: deliver
+        ? ["Run with --execute to save the draft and send it"]
+        : [
+            "Run with --execute to save it as a draft in Outlook",
+            "Add --send to deliver it in the same step",
+          ],
     };
   }
-  const m365Args = ["outlook", "mail", "send"];
-  m365Args.push("--to", to);
-  if (preview.cc) {
-    m365Args.push("--cc", preview.cc as string);
-  }
-  if (preview.bcc) {
-    m365Args.push("--bcc", preview.bcc as string);
-  }
-  m365Args.push("--subject", subject, "--bodyContents", body);
-  const bodyType = flagString(parsed, "body-type", SEND_FLAGS);
-  if (bodyType !== undefined) {
-    m365Args.push("--bodyContentType", bodyType);
-  }
-  const importance = flagString(parsed, "importance", SEND_FLAGS);
-  if (importance !== undefined) {
-    m365Args.push("--importance", importance);
-  }
-  const attach = flagString(parsed, "attach", SEND_FLAGS);
-  if (attach !== undefined) {
-    m365Args.push("--attachment", attach);
-  }
-  const mailbox = flagString(parsed, "mailbox", SEND_FLAGS);
-  if (mailbox !== undefined) {
-    m365Args.push("--mailbox", mailbox);
-  }
-  const sender = flagString(parsed, "sender", SEND_FLAGS);
-  if (sender !== undefined) {
-    m365Args.push("--sender", sender);
+
+  const id = await createDraftMessage(context, {
+    to,
+    subject,
+    body,
+    bodyType: flagString(parsed, "body-type", SEND_FLAGS),
+    cc: flagString(parsed, "cc", SEND_FLAGS),
+    bcc: flagString(parsed, "bcc", SEND_FLAGS),
+    importance: flagString(parsed, "importance", SEND_FLAGS),
+    sender: flagString(parsed, "sender", SEND_FLAGS),
+    attachments: attach === "" ? undefined : readAttachments(attach),
+    userFlag,
+  });
+
+  if (!deliver) {
+    return {
+      sent: false,
+      draft: true,
+      id,
+      to,
+      subject,
+      help: [
+        "Review the message in Outlook first",
+        `Then deliver it with \`msgraph-axi mail send --draft ${id} --execute\``,
+      ],
+    };
   }
 
-  await context.m365.run(m365Args);
-  return { sent: true, to, subject };
+  await mailSendDraft(id, userFlag, context);
+  return { sent: true, draftId: id, to, subject };
 }
 
 export async function mailDelete(

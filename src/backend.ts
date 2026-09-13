@@ -1,6 +1,8 @@
 import { spawn } from "cross-spawn";
 import { AxiError } from "axi-sdk-js";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { hostTimeZone } from "./time.js";
 
 export interface RunResult {
@@ -19,6 +21,72 @@ export interface M365Status {
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** cmd.exe refuses anything longer; the real limit is 8191 characters. */
+const CMD_LINE_LIMIT = 8000;
+
+/**
+ * On Windows an npm-installed CLI is spawned through its `.cmd` shim, so the
+ * arguments travel via cmd.exe, which truncates a value at the first line break
+ * and caps the whole command line — both silently. Refuse those values instead
+ * of sending corrupted data to Graph.
+ */
+export function assertCmdlineSafeArgs(
+  args: string[],
+  platform: string = process.platform,
+): void {
+  if (platform !== "win32") {
+    return;
+  }
+  for (const arg of args) {
+    if (/[\r\n]/.test(arg)) {
+      throw new AxiError(
+        "An argument contains a line break; on Windows it would be cut off at the first line break",
+        "VALIDATION_ERROR",
+        [
+          "Pass the payload as a file: --body @payload.json (the backend reads @file itself)",
+          "JSON payloads this CLI builds itself are sent through a temp file automatically",
+        ],
+      );
+    }
+    if (arg.length > CMD_LINE_LIMIT) {
+      throw new AxiError(
+        `An argument is ${arg.length} characters, beyond the ${CMD_LINE_LIMIT}-character Windows limit`,
+        "VALIDATION_ERROR",
+        [
+          "Pass the payload as a file: --body @payload.json (the backend reads @file itself)",
+          "JSON payloads this CLI builds itself are sent through a temp file automatically",
+        ],
+      );
+    }
+  }
+}
+
+export interface BodyArgument {
+  /** The argument to pass as `--body`: the value itself, or `@<tempfile>`. */
+  value: string;
+  cleanup: () => void;
+}
+
+/**
+ * A `--body` value that survives the platform: inline when it fits, otherwise a
+ * temp file the backend reads with `@file`.
+ */
+export function bodyArgument(
+  contents: string,
+  platform: string = process.platform,
+): BodyArgument {
+  if (platform !== "win32" || contents.length <= CMD_LINE_LIMIT) {
+    return { value: contents, cleanup: () => {} };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "msgraph-axi-body-"));
+  const file = join(dir, "body.json");
+  writeFileSync(file, contents, "utf8");
+  return {
+    value: `@${file}`,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
 export class PnpCliBackend {
   private userCache: Promise<string | undefined> | undefined;
   private timeZoneCache = new Map<string, Promise<string>>();
@@ -31,6 +99,7 @@ export class PnpCliBackend {
 
   async run(args: string[]): Promise<RunResult> {
     const full = [...this.prefix, ...args, "--output", "json"];
+    assertCmdlineSafeArgs(full);
     const spawnEnv =
       this.env === undefined
         ? undefined
@@ -79,6 +148,26 @@ export class PnpCliBackend {
         resolve({ stdout: out, code: code ?? 0 });
       });
     });
+  }
+
+  /**
+   * Run a Graph request with an optional JSON payload. Payloads too long for a
+   * Windows command line travel as a `@file` argument instead.
+   */
+  async request<T>(method: string, url: string, payload?: unknown): Promise<T> {
+    const args = ["request", "--method", method, "--url", url];
+    const argument =
+      payload === undefined
+        ? undefined
+        : bodyArgument(JSON.stringify(payload));
+    if (argument !== undefined) {
+      args.push("--body", argument.value, "--content-type", "application/json");
+    }
+    try {
+      return await this.runJson<T>(args);
+    } finally {
+      argument?.cleanup();
+    }
   }
 
   async runJsonArray<T>(args: string[]): Promise<T[]> {

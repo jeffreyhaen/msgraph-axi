@@ -1,6 +1,6 @@
 import { AxiError } from "axi-sdk-js";
-import { writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { basename, extname, join, resolve } from "node:path";
 import { PnpCliBackend } from "../backend.js";
 import {
   getGraphValue,
@@ -134,6 +134,117 @@ export async function mailSearch(
   return out;
 }
 
+export interface DraftInput {
+  to: string;
+  subject: string;
+  body: string;
+  bodyType?: string;
+  cc?: string;
+  bcc?: string;
+  importance?: string;
+  /** Sets the Graph `from` address (m365 `--sender`). */
+  sender?: string;
+  attachments?: Array<Record<string, string>>;
+  userFlag?: string;
+}
+
+/** Graph accepts up to 3 MB of file attachments on a message. */
+const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: "application/pdf",
+  txt: "text/plain",
+  csv: "text/csv",
+  json: "application/json",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  zip: "application/zip",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+
+/** Read comma-separated `--attach` paths as Graph file attachments. */
+export function readAttachments(paths: string): Array<Record<string, string>> {
+  return paths
+    .split(",")
+    .map((path) => path.trim())
+    .filter(Boolean)
+    .map((filePath) => {
+      let data: Buffer;
+      try {
+        data = readFileSync(filePath);
+      } catch {
+        throw new AxiError(
+          `Attachment not found: ${filePath}`,
+          "VALIDATION_ERROR",
+          ["Pass comma-separated paths: --attach report.pdf,sheet.xlsx"],
+        );
+      }
+      if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+        throw new AxiError(
+          `Attachment ${basename(filePath)} is ${(data.byteLength / 1024 / 1024).toFixed(1)} MB; a draft carries at most 3 MB`,
+          "VALIDATION_ERROR",
+          [
+            "Attach bigger files in Outlook after the draft is created",
+            "Or share a link instead of the file",
+          ],
+        );
+      }
+      const extension = extname(filePath).slice(1).toLowerCase();
+      return {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: basename(filePath),
+        contentType: MIME_BY_EXTENSION[extension] ?? "application/octet-stream",
+        contentBytes: data.toString("base64"),
+      };
+    });
+}
+
+/**
+ * Create a draft message through the Graph JSON bridge. The body travels as
+ * JSON, so line breaks stay escaped and multi-line mail cannot lose content on
+ * the way to the backend.
+ */
+export async function createDraftMessage(
+  context: MailFlowContext,
+  input: DraftInput,
+): Promise<string> {
+  const payload: Record<string, unknown> = {
+    subject: input.subject,
+    body: { contentType: input.bodyType ?? "text", content: input.body },
+    toRecipients: recipients(input.to),
+    isDraft: true,
+  };
+  if (input.cc !== undefined) {
+    payload.ccRecipients = recipients(input.cc);
+  }
+  if (input.bcc !== undefined) {
+    payload.bccRecipients = recipients(input.bcc);
+  }
+  if (input.importance !== undefined) {
+    payload.importance = input.importance;
+  }
+  if (input.sender !== undefined) {
+    payload.from = recipients(input.sender)[0];
+  }
+  if (input.attachments !== undefined && input.attachments.length > 0) {
+    payload.attachments = input.attachments;
+  }
+  const prefix = await graphPrefix(context, input.userFlag);
+  const draft = await context.m365.request<DraftMessage>(
+    "post",
+    `${prefix}/messages`,
+    payload,
+  );
+  return draft.id ?? "";
+}
+
 export async function mailDraft(
   args: string[],
   context: MailFlowContext,
@@ -165,37 +276,17 @@ export async function mailDraft(
       help: ["Run with --execute to save the draft"],
     };
   }
-  const payload: Record<string, unknown> = {
+  const payloadId = await createDraftMessage(context, {
+    to,
     subject,
-    body: { contentType: bodyType, content: body },
-    toRecipients: recipients(to),
-    isDraft: true,
-  };
-  const cc = flagString(parsed, "cc", DRAFT_FLAGS);
-  const bcc = flagString(parsed, "bcc", DRAFT_FLAGS);
-  if (cc !== undefined) {
-    payload.ccRecipients = recipients(cc);
-  }
-  if (bcc !== undefined) {
-    payload.bccRecipients = recipients(bcc);
-  }
-  const importance = flagString(parsed, "importance", DRAFT_FLAGS);
-  if (importance !== undefined) {
-    payload.importance = importance;
-  }
-  const prefix = await graphPrefix(context, flagString(parsed, "user", DRAFT_FLAGS));
-  const draft = await context.m365.runJson<DraftMessage>([
-    "request",
-    "--method",
-    "post",
-    "--url",
-    `${prefix}/messages`,
-    "--body",
-    JSON.stringify(payload),
-    "--content-type",
-    "application/json",
-  ]);
-  return { draft: true, id: draft.id ?? "", subject, saveToSent: false };
+    body,
+    bodyType,
+    cc: flagString(parsed, "cc", DRAFT_FLAGS),
+    bcc: flagString(parsed, "bcc", DRAFT_FLAGS),
+    importance: flagString(parsed, "importance", DRAFT_FLAGS),
+    userFlag: flagString(parsed, "user", DRAFT_FLAGS),
+  });
+  return { draft: true, id: payloadId, subject, saveToSent: false };
 }
 
 export async function mailSendDraft(

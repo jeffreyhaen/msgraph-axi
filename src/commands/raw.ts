@@ -1,5 +1,5 @@
 import { AxiError } from "axi-sdk-js";
-import { PnpCliBackend, resolveBody } from "../backend.js";
+import { PnpCliBackend, bodyArgument } from "../backend.js";
 import {
   parseFlags,
   flagString,
@@ -47,8 +47,12 @@ export async function raw(
       [`Valid methods: ${[...METHODS].join(", ")}`],
     );
   }
-  const body = resolveBody(flagString(parsed, "body", RAW_FLAGS));
-  if (body !== undefined && (method === "get" || method === "head" || method === "options")) {
+  // `@file` is handed to the backend as-is: it reads the file itself, which
+  // keeps large or multi-line payloads off the command line.
+  const bodyFlag = flagString(parsed, "body", RAW_FLAGS);
+  const bodyFile = bodyFlag?.startsWith("@") === true ? bodyFlag : undefined;
+  const body = bodyFile === undefined ? bodyFlag : undefined;
+  if (bodyFlag !== undefined && (method === "get" || method === "head" || method === "options")) {
     throw new AxiError(
       `--body is not supported for method ${method}`,
       "VALIDATION_ERROR",
@@ -69,10 +73,16 @@ export async function raw(
   const query = flagString(parsed, "query", RAW_FLAGS);
   const url = `@graph/${path}${query ? `?${query}` : ""}`;
   const requestArgs = ["request", "--method", method, "--url", url];
-  if (body !== undefined) {
+  const argument =
+    bodyFile !== undefined
+      ? { value: bodyFile, cleanup: () => {} }
+      : body === undefined
+        ? undefined
+        : bodyArgument(body);
+  if (argument !== undefined) {
     requestArgs.push(
       "--body",
-      body,
+      argument.value,
       "--content-type",
       flagString(parsed, "content-type", RAW_FLAGS) ?? "application/json",
     );
@@ -82,7 +92,12 @@ export async function raw(
     requestArgs.push("--prefer", prefer);
   }
 
-  const result = await context.m365.run(requestArgs);
+  let result;
+  try {
+    result = await context.m365.run(requestArgs);
+  } finally {
+    argument?.cleanup();
+  }
   if (result.stdout.trim() === "") {
     return { status: "ok", method, path };
   }

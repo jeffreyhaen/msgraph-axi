@@ -1,7 +1,7 @@
 // Fake m365 CLI for tests. Reads argv, writes fixture JSON on stdout,
 // "Error: ..." on stderr with exit 1 for failure modes.
 // Set FAKE_M365_LOG=<file> to append every argv as JSON lines for assertions.
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const logFile = process.env.FAKE_M365_LOG;
@@ -65,6 +65,13 @@ const directoryUsers = [
 ];
 
 const [cmd, ...rest] = args;
+
+// `--body @file` is read by the real backend, so the fixture resolves it too.
+const bodyArgs = () => {
+  const value = rest[rest.indexOf("--body") + 1];
+  if (value === undefined) return undefined;
+  return value.startsWith("@") ? readFileSync(value.slice(1), "utf8") : value;
+};
 
 if (process.env.FAKE_M365_ERROR) {
   fail(process.env.FAKE_M365_ERROR);
@@ -224,7 +231,7 @@ switch (cmd) {
         const top = topMatch ? parseInt(topMatch[1], 10) : 20;
         print({ value: messages.slice(0, top) });
       } else if (/\/messages$/.test(url) && method === "post") {
-        const bodyArg = rest[rest.indexOf("--body") + 1];
+        const bodyArg = bodyArgs();
         const body = bodyArg ? JSON.parse(bodyArg) : {};
         print({ id: "draft-1", subject: body.subject, isDraft: true });
       } else if (/\/users\/[^?]+\?/.test(url)) {

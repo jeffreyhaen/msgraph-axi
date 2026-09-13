@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { AxiError } from "axi-sdk-js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { mailDelete, mailList, mailRead, mailSend } from "../src/commands/mail.js";
 import { cleanupContext, expectAxiError, lastM365Call, makeContext, m365Calls } from "./helpers.js";
 
@@ -124,7 +127,7 @@ describe("mail read", () => {
 });
 
 describe("mail send", () => {
-  it("dry-runs without --execute", async () => {
+  it("dry-runs without --execute and says it only saves a draft", async () => {
     const ctx = makeContext();
     try {
       const out = await mailSend(
@@ -133,13 +136,15 @@ describe("mail send", () => {
       );
       expect(out.execute).toBe(false);
       expect((out.preview as Record<string, unknown>).to).toBe("a@x.com,b@y.com");
+      expect((out.preview as Record<string, unknown>).sends).toBe(false);
+      expect((out.help as string[]).join(" ")).toContain("--send");
       expect(m365Calls(ctx).length).toBe(0);
     } finally {
       cleanupContext(ctx);
     }
   });
 
-  it("sends with --execute", async () => {
+  it("saves a draft instead of delivering with --execute", async () => {
     const ctx = makeContext();
     try {
       const out = await mailSend(
@@ -156,21 +161,124 @@ describe("mail send", () => {
         ],
         ctx,
       );
-      expect(out).toMatchObject({ sent: true, subject: "Hi" });
+      expect(out).toMatchObject({ sent: false, draft: true, id: "draft-1" });
+      const urls = m365Calls(ctx).map((call) => call.join(" "));
+      expect(urls.some((url) => url.includes("/messages/draft-1/send"))).toBe(false);
       const call = lastM365Call(ctx);
-      expect(call.slice(0, 3)).toEqual(["outlook", "mail", "send"]);
-      expect(call).toEqual(
-        expect.arrayContaining([
+      expect(call.slice(0, 3)).toEqual(["request", "--method", "post"]);
+      const body = JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      expect(body).toMatchObject({
+        subject: "Hi",
+        body: { contentType: "text", content: "Hello" },
+        importance: "high",
+        isDraft: true,
+      });
+      expect((out.help as string[])[1]).toContain("mail send --draft draft-1 --execute");
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("delivers only with --send --execute", async () => {
+    const ctx = makeContext();
+    try {
+      const out = await mailSend(
+        ["--to", "a@x.com", "--subject", "Hi", "--body", "Hello", "--send", "--execute"],
+        ctx,
+      );
+      expect(out).toMatchObject({ sent: true, draftId: "draft-1", to: "a@x.com" });
+      const urls = m365Calls(ctx).map((call) => call.join(" "));
+      expect(urls.some((url) => url.includes("/messages/draft-1/send"))).toBe(true);
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("keeps multi-line bodies intact", async () => {
+    const ctx = makeContext();
+    const body = ["Hi Alex,", "", "The repository is on GitHub.", "", "Regards,", "Sam"].join("\n");
+    try {
+      await mailSend(
+        ["--to", "a@x.com", "--subject", "Hi", "--body", body, "--execute"],
+        ctx,
+      );
+      const call = lastM365Call(ctx);
+      const argument = call[call.indexOf("--body") + 1] ?? "";
+      // The payload must stay JSON: a literal line break in an argv value is
+      // silently truncated by cmd.exe / cross-spawn on Windows.
+      expect(argument).not.toMatch(/[\r\n]/);
+      const payload = JSON.parse(argument) as Record<string, unknown>;
+      expect((payload.body as Record<string, unknown>).content).toBe(body);
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("attaches files to the draft", async () => {
+    const ctx = makeContext();
+    const dir = mkdtempSync(join(tmpdir(), "msgraph-axi-mail-"));
+    const file = join(dir, "report.csv");
+    writeFileSync(file, "a,b\n1,2\n", "utf8");
+    try {
+      await mailSend(
+        [
           "--to",
           "a@x.com",
           "--subject",
           "Hi",
-          "--bodyContents",
-          "Hello",
-          "--importance",
-          "high",
-        ]),
+          "--body",
+          "See the attachment",
+          "--attach",
+          file,
+          "--execute",
+        ],
+        ctx,
       );
+      const call = lastM365Call(ctx);
+      const payload = JSON.parse(call[call.indexOf("--body") + 1] ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      const attachments = payload.attachments as Array<Record<string, string>>;
+      expect(attachments[0]).toMatchObject({
+        name: "report.csv",
+        contentType: "text/csv",
+      });
+      expect(Buffer.from(attachments[0].contentBytes, "base64").toString("utf8")).toBe(
+        "a,b\n1,2\n",
+      );
+    } finally {
+      cleanupContext(ctx);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a missing attachment before touching Graph", async () => {
+    const ctx = makeContext();
+    try {
+      await expectAxiError(
+        mailSend(
+          ["--to", "a@x.com", "--subject", "Hi", "--body", "x", "--attach", "nope.pdf", "--execute"],
+          ctx,
+        ),
+        "VALIDATION_ERROR",
+        "Attachment not found",
+      );
+      expect(m365Calls(ctx).length).toBe(0);
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
+
+  it("delivers an existing draft with --draft", async () => {
+    const ctx = makeContext();
+    try {
+      const out = await mailSend(["--draft", "draft-7", "--execute"], ctx);
+      expect(out).toMatchObject({ sent: true, draftId: "draft-7" });
+      expect(lastM365Call(ctx).join(" ")).toContain("/messages/draft-7/send");
     } finally {
       cleanupContext(ctx);
     }
