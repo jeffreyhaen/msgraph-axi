@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
 ### Changed (breaking)
 
 - `mail send` no longer delivers mail on `--execute` alone. `--execute` now saves a
