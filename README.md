@@ -146,11 +146,10 @@ npm with provenance, and creates the GitHub release with the matching `CHANGELOG
 section as its body (`scripts/release-notes.mjs`). An existing release is left as is,
 so the workflow can be re-run safely.
 
+## See also
+
+- [docs/authentication.md](docs/authentication.md) — every login flow with concrete commands
 - [AXI — agent eXperience interface](https://axi.md/) · [kunchenguid/axi](https://github.com/kunchenguid/axi)
 - [TOON — token-optimized object notation](https://toonformat.dev/) · [toonformat/toon](https://github.com/toonformat/toon)
 - [CLI for Microsoft 365](https://pnp.github.io/cli-microsoft365/) — the backend
 - [Microsoft Graph](https://learn.microsoft.com/en-us/graph/overview) — the platform
-
-## See also
-
-- [docs/authentication.md](docs/authentication.md) — every login flow with concrete commands
