@@ -130,7 +130,7 @@ Tests run against `test/fixtures/m365-cli.js` — no Microsoft 365 tenant requir
 smoke tests need `m365 login`; the fixture can be pointed at with
 `MSGRAPH_AXI_M365_BIN`.
 
-## Releasing
+### Releasing
 
 1. Move the `Unreleased` section in `CHANGELOG.md` under `## [x.y.z] - <date>`.
 2. Bump `version` in `package.json` and `VERSION` in `src/version.ts`.
