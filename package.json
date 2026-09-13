@@ -2,6 +2,27 @@
   "name": "@jeffreyhaen/msgraph-axi",
   "version": "0.1.0",
   "description": "Agent-ergonomic TOON wrapper for Microsoft Graph — Outlook mail and calendar on top of the CLI for Microsoft 365",
+  "keywords": [
+    "microsoft-graph",
+    "msgraph",
+    "m365",
+    "outlook",
+    "calendar",
+    "axi",
+    "agent",
+    "cli",
+    "toon"
+  ],
+  "license": "MIT",
+  "author": "Jeffrey Haen",
+  "homepage": "https://github.com/jeffreyhaen/msgraph-axi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeffreyhaen/msgraph-axi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jeffreyhaen/msgraph-axi/issues"
+  },
   "type": "module",
   "bin": {
     "msgraph-axi": "dist/bin/msgraph-axi.js"
@@ -10,8 +31,12 @@
     "dist",
     "README.md",
     "SKILL.md",
-    "LICENSE"
+    "LICENSE",
+    "assets"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },

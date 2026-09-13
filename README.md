@@ -1,17 +1,74 @@
-# msgraph-axi
+# msgraph-axi (Microsoft Graph axi)
 
-Agent-ergonomic [TOON](https://axi.md/) wrapper for Microsoft Graph — Outlook mail and
+[![ci](https://github.com/jeffreyhaen/msgraph-axi/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffreyhaen/msgraph-axi/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40jeffreyhaen%2Fmsgraph-axi.svg)](https://www.npmjs.com/package/@jeffreyhaen/msgraph-axi)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
+
+<p align="center">
+  <img src="assets/msgraph-axi-header.png" alt="msgraph-axi header">
+</p>
+
+Agent-ergonomic [TOON](https://toonformat.dev/) wrapper for **Microsoft Graph** — Outlook mail and
 calendar first, with a raw Graph bridge for everything else. Built on the
 [CLI for Microsoft 365](https://pnp.github.io/cli-microsoft365/) (`m365`) as a single
 backend, following the [AXI](https://github.com/kunchenguid/axi) design principles.
 
-## Install
+## Why not an MCP server
+
+A Microsoft Graph MCP server loads its full schema into the agent's context window on every
+turn (~25k-40k tokens before any work is done). A skill-based AXI costs ~55 tokens until the
+agent actually needs it, outputs compact [TOON](https://toonformat.dev/) instead of bloated
+raw Graph JSON payloads, and enforces dry-run safety gates on mutating actions.
+
+## Install & Setup
+
+Install globally (recommended for repeated use):
 
 ```sh
 npm install -g @jeffreyhaen/msgraph-axi @pnp/cli-microsoft365
+```
+
+For a one-off invocation without installing:
+
+```sh
+npx -y @jeffreyhaen/msgraph-axi --help
+```
+
+## Agent integration
+
+Install the skill globally so an agent loads the usage guide on demand:
+
+```sh
+npx skills add jeffreyhaen/msgraph-axi --skill msgraph-axi -g
+```
+
+Omit `-g` to install the skill for the current project only.
+
+### Initial Entra ID / M365 Setup
+
+The underlying CLI for Microsoft 365 requires an Entra ID application registration in your tenant:
+
+1. **Automatic setup (quickest):**
+   Run `m365 setup` and choose **Create a new app registration**. It registers an app with the CLI presets and stores the App ID in your local config.
+
+2. **Existing or manual App Registration:**
+   If your organization already has an Entra app registered for CLI / developer use (or you create one manually):
+   - Set redirect URI (Public client/mobile & desktop): `https://login.microsoftonline.com/common/oauth2/nativeclient`
+   - Grant **Delegated** Microsoft Graph permissions: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `User.Read`
+   - Save the App ID and Tenant in your CLI config:
+     ```sh
+     m365 cli config set --key clientId --value "<your-app-id>"
+     m365 cli config set --key tenantId --value "<your-tenant-id>"
+     ```
+
+Then log in:
+```sh
 msgraph-axi auth login
 msgraph-axi          # dashboard
 ```
+
+See [docs/authentication.md](docs/authentication.md) for headless / CI flows and details.
 
 ## Commands
 

@@ -5,6 +5,39 @@ reads the sign-in state through `msgraph-axi auth status`. The m365 CLI stores
 the acquired tokens itself, so a login survives across msgraph-axi invocations —
 no credentials are ever stored by msgraph-axi itself.
 
+## Entra ID App Registration
+
+CLI for Microsoft 365 (v8+) requires an Entra ID application registration in your tenant.
+
+### Option A: Interactive Setup Wizard (Recommended)
+Run:
+```sh
+m365 setup
+```
+Select **Create a new app registration**. The CLI will sign in using Azure CLI / Entra, create the app registration with the required settings, and store the Client ID in your configuration.
+
+### Option B: Custom / Existing App Registration
+If you manage the app registration yourself in the [Microsoft Entra admin center](https://entra.microsoft.com/):
+1. **Platform configuration**: Add **Mobile and desktop applications** with redirect URI:
+   - `https://login.microsoftonline.com/common/oauth2/nativeclient`
+   - `http://localhost`
+   - Set **Allow public client flows** (`isFallbackPublicClient`) to `Yes`.
+2. **API permissions**: Add **Microsoft Graph** -> **Delegated permissions** (users consent for themselves):
+   - `User.Read`
+   - `Mail.ReadWrite`
+   - `Mail.Send`
+   - `Calendars.ReadWrite`
+   - `User.ReadBasic.All`
+3. **Configure local CLI**:
+   ```sh
+   m365 cli config set --key clientId --value "<your-app-id>"
+   m365 cli config set --key tenantId --value "<your-tenant-id>"
+   ```
+
+---
+
+## Logging In
+
 The default flow is **device code** (interactive, works with MFA):
 
 ```sh
