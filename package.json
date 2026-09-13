@@ -1,6 +1,6 @@
 {
   "name": "@jeffreyhaen/msgraph-axi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent-ergonomic TOON wrapper for Microsoft Graph — Outlook mail and calendar on top of the CLI for Microsoft 365",
   "keywords": [
     "microsoft-graph",
