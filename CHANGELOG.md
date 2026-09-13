@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Documentation & Infrastructure
+
+- Run the workflows on `actions/checkout@v6`, `actions/setup-node@v6` and
+  `pnpm/action-setup@v6`; the v4 actions still targeted Node 20, which GitHub runs on
+  Node 24 with a deprecation warning.
+- Move the `Releasing` steps under `Development` in `README.md`.
+
 ## [0.2.0] - 2026-09-13
 
 ### Changed (breaking)
